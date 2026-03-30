@@ -1,2 +1,0 @@
-/usr/bin/ar qc libnash_lib.a CMakeFiles/nash_lib.dir/src/core/game.cpp.o CMakeFiles/nash_lib.dir/src/core/strategy.cpp.o CMakeFiles/nash_lib.dir/src/numerics/linear_algebra.cpp.o CMakeFiles/nash_lib.dir/src/numerics/newton_solver.cpp.o CMakeFiles/nash_lib.dir/src/numerics/path_follower.cpp.o CMakeFiles/nash_lib.dir/src/algorithms/support_enumeration.cpp.o CMakeFiles/nash_lib.dir/src/algorithms/lemke_howson.cpp.o CMakeFiles/nash_lib.dir/src/algorithms/homotopy.cpp.o
-/usr/bin/ranlib libnash_lib.a
