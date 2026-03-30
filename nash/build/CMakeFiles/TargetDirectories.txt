@@ -1,6 +1,0 @@
-/home/saad/personal/nash/build/CMakeFiles/nash_lib.dir
-/home/saad/personal/nash/build/CMakeFiles/nash_solve.dir
-/home/saad/personal/nash/build/CMakeFiles/nash_tests.dir
-/home/saad/personal/nash/build/CMakeFiles/test.dir
-/home/saad/personal/nash/build/CMakeFiles/edit_cache.dir
-/home/saad/personal/nash/build/CMakeFiles/rebuild_cache.dir

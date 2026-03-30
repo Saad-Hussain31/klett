@@ -1,1 +1,0 @@
-/usr/bin/c++ -O2 -DNDEBUG CMakeFiles/nash_tests.dir/tests/test_main.cpp.o CMakeFiles/nash_tests.dir/tests/test_linear_algebra.cpp.o CMakeFiles/nash_tests.dir/tests/test_game.cpp.o CMakeFiles/nash_tests.dir/tests/test_support_enumeration.cpp.o CMakeFiles/nash_tests.dir/tests/test_lemke_howson.cpp.o CMakeFiles/nash_tests.dir/tests/test_homotopy.cpp.o -o nash_tests  libnash_lib.a 
