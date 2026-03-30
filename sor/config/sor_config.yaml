@@ -1,0 +1,178 @@
+# ============================================================================
+# Smart Order Router — Main Configuration
+# ============================================================================
+
+system:
+  name: "SOR-Production"
+  log_level: "info"           # trace, debug, info, warn, error, critical
+  log_file: "/var/log/sor/sor.log"
+  log_format: "[%Y-%m-%d %H:%M:%S.%f] [%l] [%t] %v"
+
+# ----------------------------------------------------------------------------
+# Gateway configuration
+# ----------------------------------------------------------------------------
+gateway:
+  fix:
+    enabled: true
+    listen_port: 9876
+    sender_comp_id: "SOR"
+    target_comp_id: "CLIENT"
+    heartbeat_interval_sec: 30
+
+  api:
+    enabled: true
+    zmq_endpoint: "tcp://*:5555"
+    max_message_size: 65536
+
+# ----------------------------------------------------------------------------
+# Risk management
+# ----------------------------------------------------------------------------
+risk:
+  max_order_quantity: 100000
+  max_order_notional: 10000000.00    # $10M
+  max_position_per_symbol: 500000
+  max_total_notional: 50000000.00    # $50M
+  kill_switch:
+    enabled: true
+    max_loss_threshold: 1000000.00   # $1M triggers kill switch
+  rate_limiter:
+    enabled: true
+    max_orders_per_second: 1000
+    window_ms: 1000
+
+# ----------------------------------------------------------------------------
+# Venues
+# ----------------------------------------------------------------------------
+venues:
+  - id: 1
+    name: "NYSE"
+    adapter: "simulated"
+    enabled: true
+    fee_rate: 0.001              # 10 bps
+    rebate_rate: 0.0002          # 2 bps maker rebate
+    latency_us: 50
+    max_order_rate: 500
+    priority: 1                  # lower = preferred
+
+  - id: 2
+    name: "NASDAQ"
+    adapter: "simulated"
+    enabled: true
+    fee_rate: 0.0008
+    rebate_rate: 0.00025
+    latency_us: 30
+    max_order_rate: 800
+    priority: 1
+
+  - id: 3
+    name: "BATS"
+    adapter: "simulated"
+    enabled: true
+    fee_rate: 0.0012
+    rebate_rate: 0.0001
+    latency_us: 45
+    max_order_rate: 600
+    priority: 2
+
+  - id: 4
+    name: "IEX"
+    adapter: "fix"
+    enabled: false
+    fee_rate: 0.0009
+    rebate_rate: 0.0
+    latency_us: 100
+    max_order_rate: 200
+    priority: 3
+    fix_config:
+      host: "fix.iex.example.com"
+      port: 9878
+      sender_comp_id: "SOR_IEX"
+      target_comp_id: "IEX"
+
+# ----------------------------------------------------------------------------
+# Routing strategies
+# ----------------------------------------------------------------------------
+routing:
+  default_strategy: "best_price"
+
+  strategies:
+    best_price:
+      enabled: true
+      fee_adjusted: true          # Consider fees when comparing prices
+      staleness_threshold_us: 5000  # Reject quotes older than 5ms
+      min_venue_score: 0.5
+
+    liquidity_sweep:
+      enabled: true
+      max_venues: 5               # Max venues to sweep
+      min_fill_ratio: 0.1         # Minimum fill to bother sending
+      price_tolerance_bps: 5      # Max price deviation from NBBO
+
+    smart_ioc:
+      enabled: true
+      timeout_us: 100000          # 100ms IOC timeout
+      retry_on_reject: true
+      max_retries: 3
+
+    vwap:
+      enabled: true
+      num_slices: 20
+      interval_sec: 15.0          # Seconds between slices
+      volume_profile: "u_shape"   # uniform, u_shape, front_loaded
+      participation_rate: 0.05    # Target 5% of market volume
+
+# ----------------------------------------------------------------------------
+# Market data
+# ----------------------------------------------------------------------------
+market_data:
+  mode: "replay"                  # replay, live, hybrid
+  replay:
+    data_dir: "./data/historical"
+    symbol: "AAPL"
+    speed: 0.0                    # 0 = no delay (max speed)
+  aggregator:
+    staleness_threshold_us: 10000 # Mark quotes stale after 10ms
+    max_book_depth: 20
+  synthetic:
+    enabled: true
+    num_ticks: 50000
+    start_price: 150.00
+    volatility: 0.001
+    venues: ["NYSE", "NASDAQ", "BATS"]
+
+# ----------------------------------------------------------------------------
+# Execution
+# ----------------------------------------------------------------------------
+execution:
+  fill_aggregation: true
+  partial_fill_reroute: true
+  max_child_orders: 10
+  cancel_on_disconnect: true
+
+# ----------------------------------------------------------------------------
+# Metrics & monitoring
+# ----------------------------------------------------------------------------
+metrics:
+  prometheus:
+    enabled: true
+    endpoint: "0.0.0.0"
+    port: 9090
+    path: "/metrics"
+  latency_tracking:
+    enabled: true
+    stages: ["ingestion", "validation", "risk", "routing", "venue_send", "ack"]
+  log_metrics_interval_sec: 60
+
+# ----------------------------------------------------------------------------
+# Performance tuning
+# ----------------------------------------------------------------------------
+performance:
+  routing_thread_cpu_affinity: 2   # Pin routing thread to CPU 2
+  spsc_queue_capacity: 65536       # Must be power of 2
+  mpsc_queue_capacity: 131072
+  memory_pool:
+    order_pool_size: 100000
+    block_alignment: 64            # Cache line alignment
+  hot_reload:
+    enabled: true
+    watch_interval_sec: 5

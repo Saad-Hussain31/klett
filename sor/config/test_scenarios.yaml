@@ -1,0 +1,111 @@
+# SOR Test Scenarios
+# Run with: python -m python.backtesting.scenario_runner scenarios.yaml
+
+scenarios:
+  - name: "basic_limit_fill"
+    description: "Simple limit buy order at market ask should fill completely"
+    venues:
+      - venue_id: 1
+        name: "ExchangeA"
+        fee_rate: 0.001
+    orders:
+      - side: "buy"
+        quantity: 100
+        price: 100.05
+        order_type: "limit"
+        strategy: "best_price"
+    expected_outcomes:
+      all_filled: true
+      max_slippage_bps: 10
+    market_conditions:
+      symbol: "TEST"
+      mid_price: 100.0
+      depth: 10
+
+  - name: "multi_venue_sweep"
+    description: "Large order sweeps liquidity across multiple venues"
+    venues:
+      - venue_id: 1
+        name: "ExchangeA"
+        fee_rate: 0.001
+      - venue_id: 2
+        name: "ExchangeB"
+        fee_rate: 0.0005
+      - venue_id: 3
+        name: "ExchangeC"
+        fee_rate: 0.0008
+    orders:
+      - side: "buy"
+        quantity: 5000
+        price: 100.10
+        order_type: "limit"
+        strategy: "sweep"
+    expected_outcomes:
+      all_filled: true
+      min_fills: 1
+      max_slippage_bps: 20
+    market_conditions:
+      symbol: "TEST"
+      mid_price: 100.0
+      depth: 10
+
+  - name: "fok_insufficient_liquidity"
+    description: "FOK order should be rejected when liquidity is insufficient"
+    venues:
+      - venue_id: 1
+        name: "ExchangeA"
+        fee_rate: 0.001
+    orders:
+      - side: "buy"
+        quantity: 999999
+        price: 100.05
+        order_type: "fok"
+        strategy: "best_price"
+    expected_outcomes:
+      all_filled: false
+    market_conditions:
+      symbol: "TEST"
+      mid_price: 100.0
+      depth: 5
+
+  - name: "sell_order_best_price"
+    description: "Sell order routes to venue with highest bid"
+    venues:
+      - venue_id: 1
+        name: "ExchangeA"
+        fee_rate: 0.001
+      - venue_id: 2
+        name: "ExchangeB"
+        fee_rate: 0.0005
+    orders:
+      - side: "sell"
+        quantity: 200
+        price: 99.90
+        order_type: "limit"
+        strategy: "best_price"
+    expected_outcomes:
+      all_filled: true
+      max_slippage_bps: 15
+    market_conditions:
+      symbol: "TEST"
+      mid_price: 100.0
+      depth: 10
+
+  - name: "ioc_partial_fill"
+    description: "IOC order fills what available and cancels rest"
+    venues:
+      - venue_id: 1
+        name: "ExchangeA"
+        fee_rate: 0.001
+    orders:
+      - side: "buy"
+        quantity: 100
+        price: 100.05
+        order_type: "ioc"
+        strategy: "best_price"
+    expected_outcomes:
+      min_fills: 1
+    market_conditions:
+      symbol: "TEST"
+      mid_price: 100.0
+      depth: 5
