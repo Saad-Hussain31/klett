@@ -1,41 +1,82 @@
-# Prerequisites
-*.d
+# -----------------------
+# OS / System files
+# -----------------------
+.DS_Store
+Thumbs.db
 
-# Compiled Object files
-*.slo
-*.lo
+# -----------------------
+# Editor / IDE
+# -----------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# -----------------------
+# Build directories (all projects)
+# -----------------------
+build/
+Build/
+cmake-build-*/
+out/
+bin/
+dist/
+
+# -----------------------
+# CMake
+# -----------------------
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+compile_commands.json
+Makefile
+
+# -----------------------
+# Compiled binaries
+# -----------------------
 *.o
 *.obj
-
-# Precompiled Headers
-*.gch
-*.pch
-
-# Linker files
-*.ilk
-
-# Debugger Files
-*.pdb
-
-# Compiled Dynamic libraries
 *.so
-*.dylib
 *.dll
-
-# Fortran module files
-*.mod
-*.smod
-
-# Compiled Static libraries
-*.lai
-*.la
+*.exe
+*.out
 *.a
 *.lib
 
-# Executables
-*.exe
-*.out
-*.app
+# -----------------------
+# Logs
+# -----------------------
+*.log
 
-# debug information files
-*.dwo
+# -----------------------
+# Environment files
+# -----------------------
+.env
+.env.*
+
+# -----------------------
+# Temporary files
+# -----------------------
+*.tmp
+*.temp
+
+# -----------------------
+# Node (if any project uses it)
+# -----------------------
+node_modules/
+npm-debug.log*
+
+# -----------------------
+# Python (if any project uses it)
+# -----------------------
+__pycache__/
+*.pyc
+
+# -----------------------
+# Project-specific overrides (optional)
+# -----------------------
+# Ignore all build folders inside subprojects
+*/build/
+*/bin/
+*/out/
