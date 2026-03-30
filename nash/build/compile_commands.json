@@ -1,0 +1,77 @@
+[
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/core/game.cpp.o -c /home/saad/personal/nash/src/core/game.cpp",
+  "file": "/home/saad/personal/nash/src/core/game.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/core/strategy.cpp.o -c /home/saad/personal/nash/src/core/strategy.cpp",
+  "file": "/home/saad/personal/nash/src/core/strategy.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/numerics/linear_algebra.cpp.o -c /home/saad/personal/nash/src/numerics/linear_algebra.cpp",
+  "file": "/home/saad/personal/nash/src/numerics/linear_algebra.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/numerics/newton_solver.cpp.o -c /home/saad/personal/nash/src/numerics/newton_solver.cpp",
+  "file": "/home/saad/personal/nash/src/numerics/newton_solver.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/numerics/path_follower.cpp.o -c /home/saad/personal/nash/src/numerics/path_follower.cpp",
+  "file": "/home/saad/personal/nash/src/numerics/path_follower.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/algorithms/support_enumeration.cpp.o -c /home/saad/personal/nash/src/algorithms/support_enumeration.cpp",
+  "file": "/home/saad/personal/nash/src/algorithms/support_enumeration.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/algorithms/lemke_howson.cpp.o -c /home/saad/personal/nash/src/algorithms/lemke_howson.cpp",
+  "file": "/home/saad/personal/nash/src/algorithms/lemke_howson.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_lib.dir/src/algorithms/homotopy.cpp.o -c /home/saad/personal/nash/src/algorithms/homotopy.cpp",
+  "file": "/home/saad/personal/nash/src/algorithms/homotopy.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_solve.dir/src/main.cpp.o -c /home/saad/personal/nash/src/main.cpp",
+  "file": "/home/saad/personal/nash/src/main.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_main.cpp.o -c /home/saad/personal/nash/tests/test_main.cpp",
+  "file": "/home/saad/personal/nash/tests/test_main.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_linear_algebra.cpp.o -c /home/saad/personal/nash/tests/test_linear_algebra.cpp",
+  "file": "/home/saad/personal/nash/tests/test_linear_algebra.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_game.cpp.o -c /home/saad/personal/nash/tests/test_game.cpp",
+  "file": "/home/saad/personal/nash/tests/test_game.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_support_enumeration.cpp.o -c /home/saad/personal/nash/tests/test_support_enumeration.cpp",
+  "file": "/home/saad/personal/nash/tests/test_support_enumeration.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_lemke_howson.cpp.o -c /home/saad/personal/nash/tests/test_lemke_howson.cpp",
+  "file": "/home/saad/personal/nash/tests/test_lemke_howson.cpp"
+},
+{
+  "directory": "/home/saad/personal/nash/build",
+  "command": "/usr/bin/c++  -I/home/saad/personal/nash/include -O2 -DNDEBUG -Wall -Wextra -Wpedantic -Wno-unused-parameter -std=c++17 -o CMakeFiles/nash_tests.dir/tests/test_homotopy.cpp.o -c /home/saad/personal/nash/tests/test_homotopy.cpp",
+  "file": "/home/saad/personal/nash/tests/test_homotopy.cpp"
+}
+]

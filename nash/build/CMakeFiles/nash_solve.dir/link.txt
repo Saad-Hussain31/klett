@@ -1,0 +1,1 @@
+/usr/bin/c++ -O2 -DNDEBUG CMakeFiles/nash_solve.dir/src/main.cpp.o -o nash_solve  libnash_lib.a 
