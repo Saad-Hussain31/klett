@@ -5,8 +5,8 @@ from typing import Optional
 
 import numpy as np
 
-from ..simulation.market_simulator import MarketSimulator, VenueConfig
-from ..simulation.order_book import Side, OrderType
+from simulation.market_simulator import MarketSimulator, VenueConfig
+from simulation.order_book import Side, OrderType
 
 
 @dataclass
@@ -95,13 +95,16 @@ class StrategyEvaluator:
 
                 if fills:
                     total_fills_count += 1
-                    for f in fills:
-                        all_fill_prices.append(f.price)
-                        all_fill_qtys.append(f.quantity)
-                        # Estimate latency from venue config
-                        latency = 50.0  # default
-                        all_latencies.append(latency)
-                        total_fees += f.quantity * 0.001  # default fee
+                    for routed in fills:
+                        for f in routed.fills:
+                            all_fill_prices.append(f.price)
+                            all_fill_qtys.append(f.quantity)
+                            all_latencies.append(
+                                self.simulator.venues.get(
+                                    routed.venue_id, VenueConfig(0, "")
+                                ).latency_us
+                            )
+                            total_fees += routed.fees
 
             # Step sim to next state
             self.simulator.step()

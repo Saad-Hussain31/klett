@@ -8,6 +8,7 @@
 #include "state/order_state_machine.h"
 #include "core/types.h"
 #include "core/order.h"
+#include "test_helpers.h"
 
 #include <vector>
 #include <chrono>
@@ -83,19 +84,23 @@ TEST_CASE("PartialFills: receive partial then remaining fill",
     std::vector<ExecutionReport> reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     exchange.set_market_price(to_price(149.0), to_price(150.0));
+    std::cout << "[TEST] Partial fill exchange connected, market: bid=149, ask=150\n";
 
     auto order = make_buy(1, 100, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created buy order: id=1, qty=100, px=151.0\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
     // First matching cycle -- should produce partial fill.
     exchange.process_matching();
+    std::cout << "[FILL] After first matching cycle, reports: " << reports.size() << "\n";
 
     // Find the partial fill report.
     bool found_partial = false;
@@ -115,28 +120,33 @@ TEST_CASE("PartialFills: receive partial then remaining fill",
     // Check order is in PartiallyFilled state.
     const Order *tracked = handler.get_order(1);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::PartiallyFilled);
+    CHECK_WITH_LOG(tracked->state == OrderState::PartiallyFilled, "order partially filled");
     CHECK(tracked->filled_quantity > 0);
     CHECK(tracked->filled_quantity < 100);
+    FillLogger::log_order_state(*tracked, "after first partial");
 
     // Continue matching until fully filled (may take several cycles because
     // partial_fill_probability is 1.0, but each partial moves forward).
     int max_cycles = 50;
+    int cycle = 0;
     while (max_cycles-- > 0)
     {
+        ++cycle;
         exchange.process_matching();
         tracked = handler.get_order(1);
         if (tracked->state == OrderState::Filled)
         {
+            std::cout << "[FILL] Fully filled after " << cycle << " additional matching cycles\n";
             break;
         }
     }
 
     tracked = handler.get_order(1);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Filled);
-    CHECK(tracked->filled_quantity == 100);
-    CHECK(tracked->remaining_quantity == 0);
+    CHECK_WITH_LOG(tracked->state == OrderState::Filled, "order fully filled after partials");
+    CHECK_WITH_LOG(tracked->filled_quantity == 100, "total fill qty = 100");
+    CHECK_WITH_LOG(tracked->remaining_quantity == 0, "no remaining quantity");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -152,6 +162,7 @@ TEST_CASE("PartialFills: cumulative fill quantities are consistent",
     std::vector<ExecutionReport> all_reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         all_reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
@@ -159,24 +170,29 @@ TEST_CASE("PartialFills: cumulative fill quantities are consistent",
     exchange.set_market_price(to_price(149.0), to_price(150.0));
 
     auto order = make_buy(2, 200, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created buy order: id=2, qty=200, px=151.0\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
     // Run matching until filled.
     int max_cycles = 100;
+    int cycle = 0;
     while (max_cycles-- > 0)
     {
+        ++cycle;
         exchange.process_matching();
         const Order *tracked = handler.get_order(2);
         if (tracked && tracked->state == OrderState::Filled)
         {
+            std::cout << "[FILL] Filled after " << cycle << " matching cycles\n";
             break;
         }
     }
 
     // Verify cumulative quantities in reports are monotonically increasing.
     Quantity prev_cum = 0;
+    int fill_report_count = 0;
     for (const auto &r : all_reports)
     {
         if (r.order_id != 2)
@@ -185,17 +201,20 @@ TEST_CASE("PartialFills: cumulative fill quantities are consistent",
         {
             CHECK(r.cum_quantity > prev_cum);
             prev_cum = r.cum_quantity;
+            ++fill_report_count;
         }
     }
+    std::cout << "[FILL] Total fill reports with last_quantity > 0: " << fill_report_count << "\n";
 
     // Final state.
     const Order *tracked = handler.get_order(2);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Filled);
-    CHECK(tracked->filled_quantity == 200);
-    CHECK(tracked->remaining_quantity == 0);
+    CHECK_WITH_LOG(tracked->state == OrderState::Filled, "order fully filled");
+    CHECK_WITH_LOG(tracked->filled_quantity == 200, "total fill qty = 200");
+    CHECK_WITH_LOG(tracked->remaining_quantity == 0, "no remaining quantity");
     // Average fill price should be valid.
-    CHECK(tracked->avg_fill_price > 0);
+    CHECK_WITH_LOG(tracked->avg_fill_price > 0, "valid average fill price");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -210,13 +229,16 @@ TEST_CASE("PartialFills: average fill price computed correctly on uniform fills"
     ExecutionHandler handler;
 
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
-                                    { handler.on_execution_report(rpt); });
+                                    {
+        FillLogger::log_exec_report(rpt, "exec callback");
+        handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     exchange.set_market_price(to_price(149.0), to_price(150.0));
 
     auto order = make_buy(3, 100, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created buy order for avg price test: id=3, qty=100\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -224,9 +246,10 @@ TEST_CASE("PartialFills: average fill price computed correctly on uniform fills"
 
     const Order *tracked = handler.get_order(3);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Filled);
+    CHECK_WITH_LOG(tracked->state == OrderState::Filled, "order filled");
     // All filled at market ask = 150.0.
-    CHECK(tracked->avg_fill_price == to_price(150.0));
+    CHECK_WITH_LOG(tracked->avg_fill_price == to_price(150.0), "avg fill price = 150.0");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -240,7 +263,9 @@ TEST_CASE("PartialFills: child partial fills propagate to parent",
     ExecutionHandler handler;
 
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
-                                    { handler.on_execution_report(rpt); });
+                                    {
+        FillLogger::log_exec_report(rpt, "exec callback");
+        handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     exchange.set_market_price(to_price(149.0), to_price(150.0));
@@ -259,6 +284,7 @@ TEST_CASE("PartialFills: child partial fills propagate to parent",
     parent.state = OrderState::Accepted;
     parent.create_time = std::chrono::steady_clock::now();
 
+    std::cout << "[TEST] Created parent order: id=100, qty=200\n";
     handler.track_order(parent);
 
     // Create two child orders, each for half the parent.
@@ -280,30 +306,35 @@ TEST_CASE("PartialFills: child partial fills propagate to parent",
     child2.id = 202;
     child2.client_order_id = 202;
 
+    std::cout << "[TEST] Created child1 (id=201) and child2 (id=202), each qty=100\n";
     handler.track_child_order(100, child1);
     handler.track_child_order(100, child2);
 
     // Send child1, fill it.
+    std::cout << "[TEST] Sending child1 (id=201) to exchange\n";
     REQUIRE(exchange.send_order(child1));
     exchange.process_matching();
 
     // Parent should be PartiallyFilled after first child fills.
     const Order *tracked_parent = handler.get_order(100);
     REQUIRE(tracked_parent != nullptr);
-    CHECK(tracked_parent->filled_quantity == 100);
-    CHECK(tracked_parent->remaining_quantity == 100);
+    CHECK_WITH_LOG(tracked_parent->filled_quantity == 100, "parent half filled after child1");
+    CHECK_WITH_LOG(tracked_parent->remaining_quantity == 100, "parent has 100 remaining");
+    FillLogger::log_order_state(*tracked_parent, "after child1 fill");
 
     // Send and fill child2.
+    std::cout << "[TEST] Sending child2 (id=202) to exchange\n";
     REQUIRE(exchange.send_order(child2));
     exchange.process_matching();
 
     // Parent should now be Filled.
     tracked_parent = handler.get_order(100);
     REQUIRE(tracked_parent != nullptr);
-    CHECK(tracked_parent->state == OrderState::Filled);
-    CHECK(tracked_parent->filled_quantity == 200);
-    CHECK(tracked_parent->remaining_quantity == 0);
-    CHECK(tracked_parent->avg_fill_price == to_price(150.0));
+    CHECK_WITH_LOG(tracked_parent->state == OrderState::Filled, "parent fully filled");
+    CHECK_WITH_LOG(tracked_parent->filled_quantity == 200, "parent total fill = 200");
+    CHECK_WITH_LOG(tracked_parent->remaining_quantity == 0, "parent no remaining");
+    CHECK_WITH_LOG(tracked_parent->avg_fill_price == to_price(150.0), "parent avg price = 150.0");
+    FillLogger::log_order_state(*tracked_parent, "parent final state");
 }
 
 // ============================================================================
@@ -317,9 +348,13 @@ TEST_CASE("PartialFills: fill callback fires for each fill event",
     ExecutionHandler handler;
 
     int fill_callback_count = 0;
-    handler.set_fill_callback([&](const Order &, const ExecutionReport &rpt)
+    handler.set_fill_callback([&](const Order &o, const ExecutionReport &rpt)
                               {
         ++fill_callback_count;
+        std::cout << "[FILL] Fill callback #" << fill_callback_count
+                  << ": order_id=" << o.id
+                  << " last_qty=" << rpt.last_quantity
+                  << " cum_qty=" << rpt.cum_quantity << "\n";
         CHECK(rpt.last_quantity > 0); });
 
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
@@ -329,7 +364,8 @@ TEST_CASE("PartialFills: fill callback fires for each fill event",
     exchange.set_market_price(to_price(149.0), to_price(150.0));
 
     auto order = make_buy(4, 100, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created buy order for fill callback test: id=4, qty=100\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -346,7 +382,8 @@ TEST_CASE("PartialFills: fill callback fires for each fill event",
     }
 
     // Should have received at least 2 fill callbacks (partial + final).
-    CHECK(fill_callback_count >= 2);
+    std::cout << "[FILL] Total fill callbacks: " << fill_callback_count << "\n";
+    CHECK_WITH_LOG(fill_callback_count >= 2, "received multiple fill callbacks");
 }
 
 // ============================================================================
@@ -366,7 +403,7 @@ TEST_CASE("PartialFills: handler stats track partial and total fills",
     exchange.set_market_price(to_price(149.0), to_price(150.0));
 
     auto order = make_buy(5, 100, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -382,6 +419,8 @@ TEST_CASE("PartialFills: handler stats track partial and total fills",
     }
 
     auto stats = handler.get_stats();
+    std::cout << "[TEST] Handler stats: total_fills=" << stats.total_fills
+              << " total_partial_fills=" << stats.total_partial_fills << "\n";
     CHECK(stats.total_fills >= 1);
     CHECK(stats.total_partial_fills >= 1);
 }

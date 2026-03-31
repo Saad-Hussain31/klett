@@ -10,8 +10,8 @@ from typing import Optional
 
 import numpy as np
 
-from ..simulation.market_simulator import MarketSimulator, VenueConfig
-from ..simulation.order_book import Side
+from simulation.market_simulator import MarketSimulator, VenueConfig
+from simulation.order_book import Side
 
 
 @dataclass

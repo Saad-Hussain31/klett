@@ -6,22 +6,20 @@ set(UNIT_TEST_SOURCES
     test_market_data.cpp
     test_fixed_point.cpp
     test_memory_pool.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/../test_main_listener.cpp
 )
 
 add_executable(sor_unit_tests ${UNIT_TEST_SOURCES})
 
 target_include_directories(sor_unit_tests
     PRIVATE ${PROJECT_SOURCE_DIR}
+    PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
 target_link_libraries(sor_unit_tests
     PRIVATE
         Catch2::Catch2WithMain
-        sor_core
-        sor_state
-        sor_risk
-        sor_routing
-        sor_market_data
+        sor
 )
 
 catch_discover_tests(sor_unit_tests)

@@ -8,6 +8,7 @@
 #include "state/order_state_machine.h"
 #include "core/types.h"
 #include "core/order.h"
+#include "test_helpers.h"
 
 #include <vector>
 #include <chrono>
@@ -75,25 +76,30 @@ TEST_CASE("Lifecycle: submit limit buy, full fill", "[integration][lifecycle]")
     std::vector<ExecutionReport> reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
+    std::cout << "[TEST] Exchange connected\n";
 
     // Set market price so our buy limit is marketable.
     exchange.set_market_price(to_price(149.0), to_price(150.0));
+    std::cout << "[TEST] Market price set: bid=149.0, ask=150.0\n";
 
     // Create and track the order.
     auto order = make_limit_buy(1, "AAPL", 100, 151.0);
+    std::cout << "[TEST] Created limit buy: id=1, AAPL, qty=100, px=151.0\n";
 
     // Submit -> PendingNew.
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     REQUIRE(order.state == OrderState::PendingNew);
 
     handler.track_order(order);
 
     // Send to exchange -- this generates an Accepted ack synchronously.
     REQUIRE(exchange.send_order(order));
+    std::cout << "[TEST] Order sent to exchange\n";
 
     // We should have received an Accepted report.
     REQUIRE(reports.size() >= 1);
@@ -101,6 +107,7 @@ TEST_CASE("Lifecycle: submit limit buy, full fill", "[integration][lifecycle]")
 
     // Process matching -- should generate a fill.
     exchange.process_matching();
+    std::cout << "[TEST] Matching processed, reports received: " << reports.size() << "\n";
 
     // Check that we received a Filled report.
     REQUIRE(reports.size() >= 2);
@@ -123,9 +130,10 @@ TEST_CASE("Lifecycle: submit limit buy, full fill", "[integration][lifecycle]")
     // Verify order state in handler.
     const Order *tracked = handler.get_order(1);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Filled);
-    CHECK(tracked->filled_quantity == 100);
-    CHECK(tracked->remaining_quantity == 0);
+    CHECK_WITH_LOG(tracked->state == OrderState::Filled, "order reached Filled state");
+    CHECK_WITH_LOG(tracked->filled_quantity == 100, "full quantity filled");
+    CHECK_WITH_LOG(tracked->remaining_quantity == 0, "no remaining quantity");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 TEST_CASE("Lifecycle: submit limit sell, full fill", "[integration][lifecycle]")
@@ -136,14 +144,16 @@ TEST_CASE("Lifecycle: submit limit sell, full fill", "[integration][lifecycle]")
     std::vector<ExecutionReport> reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     exchange.set_market_price(to_price(150.0), to_price(151.0));
+    std::cout << "[TEST] Created limit sell: id=2, AAPL, qty=50, px=149.0\n";
 
     auto order = make_limit_sell(2, "AAPL", 50, 149.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -151,8 +161,9 @@ TEST_CASE("Lifecycle: submit limit sell, full fill", "[integration][lifecycle]")
 
     const Order *tracked = handler.get_order(2);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Filled);
-    CHECK(tracked->filled_quantity == 50);
+    CHECK_WITH_LOG(tracked->state == OrderState::Filled, "sell order filled");
+    CHECK_WITH_LOG(tracked->filled_quantity == 50, "full sell quantity filled");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -167,15 +178,18 @@ TEST_CASE("Lifecycle: non-marketable limit stays Accepted", "[integration][lifec
     std::vector<ExecutionReport> reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     // Market ask at 155; our buy limit at 150 is not marketable.
     exchange.set_market_price(to_price(149.0), to_price(155.0));
+    std::cout << "[TEST] Market price set: bid=149.0, ask=155.0 (non-marketable)\n";
 
     auto order = make_limit_buy(3, "AAPL", 100, 150.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created non-marketable limit buy: id=3, px=150.0 < ask=155.0\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -184,8 +198,9 @@ TEST_CASE("Lifecycle: non-marketable limit stays Accepted", "[integration][lifec
     const Order *tracked = handler.get_order(3);
     REQUIRE(tracked != nullptr);
     // Should remain Accepted (not filled; non-marketable GTC order stays on book).
-    CHECK(tracked->state == OrderState::Accepted);
-    CHECK(tracked->filled_quantity == 0);
+    CHECK_WITH_LOG(tracked->state == OrderState::Accepted, "non-marketable order stays Accepted");
+    CHECK_WITH_LOG(tracked->filled_quantity == 0, "no fills on non-marketable order");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -200,6 +215,7 @@ TEST_CASE("Lifecycle: submit then cancel", "[integration][lifecycle]")
     std::vector<ExecutionReport> reports;
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
                                     {
+        FillLogger::log_exec_report(rpt, "exec callback");
         reports.push_back(rpt);
         handler.on_execution_report(rpt); });
 
@@ -208,7 +224,8 @@ TEST_CASE("Lifecycle: submit then cancel", "[integration][lifecycle]")
     exchange.set_market_price(to_price(149.0), to_price(155.0));
 
     auto order = make_limit_buy(4, "AAPL", 100, 150.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    std::cout << "[TEST] Created order for cancel test: id=4\n";
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
@@ -217,6 +234,7 @@ TEST_CASE("Lifecycle: submit then cancel", "[integration][lifecycle]")
     cr.order_id = 4;
     cr.symbol = "AAPL";
     cr.side = Side::Buy;
+    std::cout << "[TEST] Sending cancel request for order_id=4\n";
     REQUIRE(exchange.cancel_order(cr));
 
     // Process -- cancel should be acknowledged.
@@ -228,13 +246,15 @@ TEST_CASE("Lifecycle: submit then cancel", "[integration][lifecycle]")
         if (r.state == OrderState::Canceled)
         {
             found_cancel = true;
+            FillLogger::log_exec_report(r, "cancel ack");
         }
     }
     REQUIRE(found_cancel);
 
     const Order *tracked = handler.get_order(4);
     REQUIRE(tracked != nullptr);
-    CHECK(tracked->state == OrderState::Canceled);
+    CHECK_WITH_LOG(tracked->state == OrderState::Canceled, "order successfully canceled");
+    FillLogger::log_order_state(*tracked, "final state");
 }
 
 // ============================================================================
@@ -250,23 +270,27 @@ TEST_CASE("Lifecycle: completion callback fires on full fill", "[integration][li
     handler.set_completion_callback([&](const Order &o)
                                     {
         completion_fired = true;
+        std::cout << "[TEST] Completion callback fired for order_id=" << o.id << "\n";
+        FillLogger::log_order_state(o, "completion callback");
         CHECK(o.state == OrderState::Filled);
         CHECK(o.filled_quantity == 100); });
 
     exchange.set_execution_callback([&](const ExecutionReport &rpt)
-                                    { handler.on_execution_report(rpt); });
+                                    {
+        FillLogger::log_exec_report(rpt, "exec callback");
+        handler.on_execution_report(rpt); });
 
     REQUIRE(exchange.connect());
     exchange.set_market_price(to_price(149.0), to_price(150.0));
 
     auto order = make_limit_buy(5, "AAPL", 100, 151.0);
-    OrderStateMachine::apply(order, OrderEvent::Submit);
+    StateTransitionLogger::apply(order, OrderEvent::Submit);
     handler.track_order(order);
     REQUIRE(exchange.send_order(order));
 
     exchange.process_matching();
 
-    CHECK(completion_fired);
+    CHECK_WITH_LOG(completion_fired, "completion callback was invoked");
 }
 
 // ============================================================================
@@ -287,6 +311,8 @@ TEST_CASE("Lifecycle: exchange stats track fills", "[integration][lifecycle]")
     exchange.process_matching();
 
     auto stats = exchange.get_stats();
+    std::cout << "[TEST] Exchange stats: orders_received=" << stats.orders_received
+              << " orders_filled=" << stats.orders_filled << "\n";
     CHECK(stats.orders_received == 1);
     CHECK(stats.orders_filled == 1);
 }

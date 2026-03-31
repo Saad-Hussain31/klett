@@ -4,6 +4,7 @@
 
 #include "state/order_state_machine.h"
 #include "core/order.h"
+#include "test_helpers.h"
 
 using namespace sor;
 using namespace sor::state;
@@ -33,7 +34,7 @@ static Order make_order(OrderState state)
 
 TEST_CASE("OSM: New -> PendingNew via Submit", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::New, OrderEvent::Submit);
+    auto result = StateTransitionLogger::apply(OrderState::New, OrderEvent::Submit);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PendingNew);
     REQUIRE(OrderStateMachine::is_valid_transition(OrderState::New, OrderEvent::Submit));
@@ -41,119 +42,119 @@ TEST_CASE("OSM: New -> PendingNew via Submit", "[state_machine]")
 
 TEST_CASE("OSM: PendingNew -> Accepted via Acknowledge", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingNew, OrderEvent::Acknowledge);
+    auto result = StateTransitionLogger::apply(OrderState::PendingNew, OrderEvent::Acknowledge);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Accepted);
 }
 
 TEST_CASE("OSM: PendingNew -> Rejected via Reject", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingNew, OrderEvent::Reject);
+    auto result = StateTransitionLogger::apply(OrderState::PendingNew, OrderEvent::Reject);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Rejected);
 }
 
 TEST_CASE("OSM: Accepted -> PartiallyFilled via PartialFill", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::Accepted, OrderEvent::PartialFill);
+    auto result = StateTransitionLogger::apply(OrderState::Accepted, OrderEvent::PartialFill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PartiallyFilled);
 }
 
 TEST_CASE("OSM: Accepted -> Filled via Fill", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::Accepted, OrderEvent::Fill);
+    auto result = StateTransitionLogger::apply(OrderState::Accepted, OrderEvent::Fill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Filled);
 }
 
 TEST_CASE("OSM: Accepted -> PendingCancel via RequestCancel", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::Accepted, OrderEvent::RequestCancel);
+    auto result = StateTransitionLogger::apply(OrderState::Accepted, OrderEvent::RequestCancel);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PendingCancel);
 }
 
 TEST_CASE("OSM: Accepted -> Expired via Expire", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::Accepted, OrderEvent::Expire);
+    auto result = StateTransitionLogger::apply(OrderState::Accepted, OrderEvent::Expire);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Expired);
 }
 
 TEST_CASE("OSM: Accepted -> PendingReplace via RequestReplace", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::Accepted, OrderEvent::RequestReplace);
+    auto result = StateTransitionLogger::apply(OrderState::Accepted, OrderEvent::RequestReplace);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PendingReplace);
 }
 
 TEST_CASE("OSM: PartiallyFilled -> PartiallyFilled via PartialFill", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PartiallyFilled, OrderEvent::PartialFill);
+    auto result = StateTransitionLogger::apply(OrderState::PartiallyFilled, OrderEvent::PartialFill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PartiallyFilled);
 }
 
 TEST_CASE("OSM: PartiallyFilled -> Filled via Fill", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PartiallyFilled, OrderEvent::Fill);
+    auto result = StateTransitionLogger::apply(OrderState::PartiallyFilled, OrderEvent::Fill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Filled);
 }
 
 TEST_CASE("OSM: PartiallyFilled -> PendingCancel via RequestCancel", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PartiallyFilled, OrderEvent::RequestCancel);
+    auto result = StateTransitionLogger::apply(OrderState::PartiallyFilled, OrderEvent::RequestCancel);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PendingCancel);
 }
 
 TEST_CASE("OSM: PendingCancel -> Canceled via CancelAck", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingCancel, OrderEvent::CancelAck);
+    auto result = StateTransitionLogger::apply(OrderState::PendingCancel, OrderEvent::CancelAck);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Canceled);
 }
 
 TEST_CASE("OSM: PendingCancel -> Filled via Fill (race)", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingCancel, OrderEvent::Fill);
+    auto result = StateTransitionLogger::apply(OrderState::PendingCancel, OrderEvent::Fill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Filled);
 }
 
 TEST_CASE("OSM: PendingCancel -> PendingCancel via PartialFill (in-flight)", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingCancel, OrderEvent::PartialFill);
+    auto result = StateTransitionLogger::apply(OrderState::PendingCancel, OrderEvent::PartialFill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::PendingCancel);
 }
 
 TEST_CASE("OSM: PendingCancel -> Accepted via Reject (cancel rejected)", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingCancel, OrderEvent::Reject);
+    auto result = StateTransitionLogger::apply(OrderState::PendingCancel, OrderEvent::Reject);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Accepted);
 }
 
 TEST_CASE("OSM: PendingReplace -> Accepted via ReplaceAck", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingReplace, OrderEvent::ReplaceAck);
+    auto result = StateTransitionLogger::apply(OrderState::PendingReplace, OrderEvent::ReplaceAck);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Accepted);
 }
 
 TEST_CASE("OSM: PendingReplace -> Accepted via Reject (replace rejected)", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingReplace, OrderEvent::Reject);
+    auto result = StateTransitionLogger::apply(OrderState::PendingReplace, OrderEvent::Reject);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Accepted);
 }
 
 TEST_CASE("OSM: PendingReplace -> Filled via Fill (race)", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PendingReplace, OrderEvent::Fill);
+    auto result = StateTransitionLogger::apply(OrderState::PendingReplace, OrderEvent::Fill);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Filled);
 }
@@ -164,7 +165,7 @@ TEST_CASE("OSM: PendingReplace -> Filled via Fill (race)", "[state_machine]")
 
 TEST_CASE("OSM: PartiallyFilled -> Expired via Expire", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::PartiallyFilled, OrderEvent::Expire);
+    auto result = StateTransitionLogger::apply(OrderState::PartiallyFilled, OrderEvent::Expire);
     REQUIRE(result.has_value());
     REQUIRE(*result == OrderState::Expired);
 }
@@ -175,7 +176,7 @@ TEST_CASE("OSM: PartiallyFilled -> Expired via Expire", "[state_machine]")
 
 TEST_CASE("OSM: New + Fill is invalid", "[state_machine]")
 {
-    auto result = OrderStateMachine::apply(OrderState::New, OrderEvent::Fill);
+    auto result = StateTransitionLogger::apply(OrderState::New, OrderEvent::Fill);
     REQUIRE_FALSE(result.has_value());
     REQUIRE_FALSE(OrderStateMachine::is_valid_transition(OrderState::New, OrderEvent::Fill));
 }
@@ -191,14 +192,16 @@ TEST_CASE("OSM: New + any event besides Submit is invalid", "[state_machine]")
     REQUIRE_FALSE(OrderStateMachine::is_valid_transition(OrderState::New, OrderEvent::Expire));
     REQUIRE_FALSE(OrderStateMachine::is_valid_transition(OrderState::New, OrderEvent::RequestReplace));
     REQUIRE_FALSE(OrderStateMachine::is_valid_transition(OrderState::New, OrderEvent::ReplaceAck));
+    std::cout << "[STATE] Verified: New state rejects all events except Submit\n";
 }
 
 TEST_CASE("OSM: Filled is terminal -- all events fail", "[state_machine]")
 {
+    std::cout << "[STATE] Testing terminal state: Filled\n";
     for (uint8_t e = 0; e < static_cast<uint8_t>(NUM_ORDER_EVENTS); ++e)
     {
         auto event = static_cast<OrderEvent>(e);
-        auto result = OrderStateMachine::apply(OrderState::Filled, event);
+        auto result = StateTransitionLogger::apply(OrderState::Filled, event);
         REQUIRE_FALSE(result.has_value());
         REQUIRE_FALSE(OrderStateMachine::is_valid_transition(OrderState::Filled, event));
     }
@@ -206,30 +209,33 @@ TEST_CASE("OSM: Filled is terminal -- all events fail", "[state_machine]")
 
 TEST_CASE("OSM: Canceled is terminal -- all events fail", "[state_machine]")
 {
+    std::cout << "[STATE] Testing terminal state: Canceled\n";
     for (uint8_t e = 0; e < static_cast<uint8_t>(NUM_ORDER_EVENTS); ++e)
     {
         auto event = static_cast<OrderEvent>(e);
-        auto result = OrderStateMachine::apply(OrderState::Canceled, event);
+        auto result = StateTransitionLogger::apply(OrderState::Canceled, event);
         REQUIRE_FALSE(result.has_value());
     }
 }
 
 TEST_CASE("OSM: Rejected is terminal -- all events fail", "[state_machine]")
 {
+    std::cout << "[STATE] Testing terminal state: Rejected\n";
     for (uint8_t e = 0; e < static_cast<uint8_t>(NUM_ORDER_EVENTS); ++e)
     {
         auto event = static_cast<OrderEvent>(e);
-        auto result = OrderStateMachine::apply(OrderState::Rejected, event);
+        auto result = StateTransitionLogger::apply(OrderState::Rejected, event);
         REQUIRE_FALSE(result.has_value());
     }
 }
 
 TEST_CASE("OSM: Expired is terminal -- all events fail", "[state_machine]")
 {
+    std::cout << "[STATE] Testing terminal state: Expired\n";
     for (uint8_t e = 0; e < static_cast<uint8_t>(NUM_ORDER_EVENTS); ++e)
     {
         auto event = static_cast<OrderEvent>(e);
-        auto result = OrderStateMachine::apply(OrderState::Expired, event);
+        auto result = StateTransitionLogger::apply(OrderState::Expired, event);
         REQUIRE_FALSE(result.has_value());
     }
 }
@@ -245,7 +251,7 @@ TEST_CASE("OSM: apply on Order updates state and bumps version", "[state_machine
 
     SECTION("Successful transition")
     {
-        bool ok = OrderStateMachine::apply(o, OrderEvent::Submit);
+        bool ok = StateTransitionLogger::apply(o, OrderEvent::Submit);
         REQUIRE(ok);
         REQUIRE(o.state == OrderState::PendingNew);
         REQUIRE(o.version == 1);
@@ -253,7 +259,7 @@ TEST_CASE("OSM: apply on Order updates state and bumps version", "[state_machine
 
     SECTION("Failed transition does not change order")
     {
-        bool ok = OrderStateMachine::apply(o, OrderEvent::Fill);
+        bool ok = StateTransitionLogger::apply(o, OrderEvent::Fill);
         REQUIRE_FALSE(ok);
         REQUIRE(o.state == OrderState::New);
         REQUIRE(o.version == 0);
@@ -263,71 +269,77 @@ TEST_CASE("OSM: apply on Order updates state and bumps version", "[state_machine
 TEST_CASE("OSM: full lifecycle through Order object", "[state_machine]")
 {
     Order o = make_order(OrderState::New);
+    std::cout << "[STATE] Starting full lifecycle test\n";
 
     // New -> PendingNew
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Submit));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Submit));
     REQUIRE(o.state == OrderState::PendingNew);
     REQUIRE(o.version == 1);
 
     // PendingNew -> Accepted
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Acknowledge));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Acknowledge));
     REQUIRE(o.state == OrderState::Accepted);
     REQUIRE(o.version == 2);
 
     // Accepted -> PartiallyFilled
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::PartialFill));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::PartialFill));
     REQUIRE(o.state == OrderState::PartiallyFilled);
     REQUIRE(o.version == 3);
 
     // PartiallyFilled -> PartiallyFilled
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::PartialFill));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::PartialFill));
     REQUIRE(o.state == OrderState::PartiallyFilled);
     REQUIRE(o.version == 4);
 
     // PartiallyFilled -> Filled
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Fill));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Fill));
     REQUIRE(o.state == OrderState::Filled);
     REQUIRE(o.version == 5);
     REQUIRE(o.is_terminal());
 
     // Terminal -- no further transitions allowed.
-    REQUIRE_FALSE(OrderStateMachine::apply(o, OrderEvent::PartialFill));
+    REQUIRE_FALSE(StateTransitionLogger::apply(o, OrderEvent::PartialFill));
     REQUIRE(o.version == 5); // unchanged
+    std::cout << "[STATE] Full lifecycle complete: version=" << o.version << "\n";
 }
 
 TEST_CASE("OSM: cancel lifecycle through Order object", "[state_machine]")
 {
     Order o = make_order(OrderState::New);
+    std::cout << "[STATE] Starting cancel lifecycle test\n";
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Submit));
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Acknowledge));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Submit));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Acknowledge));
     REQUIRE(o.state == OrderState::Accepted);
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::RequestCancel));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::RequestCancel));
     REQUIRE(o.state == OrderState::PendingCancel);
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::CancelAck));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::CancelAck));
     REQUIRE(o.state == OrderState::Canceled);
     REQUIRE(o.is_terminal());
+    std::cout << "[STATE] Cancel lifecycle complete\n";
 }
 
 TEST_CASE("OSM: replace lifecycle through Order object", "[state_machine]")
 {
     Order o = make_order(OrderState::New);
+    std::cout << "[STATE] Starting replace lifecycle test\n";
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Submit));
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Acknowledge));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Submit));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Acknowledge));
     REQUIRE(o.state == OrderState::Accepted);
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::RequestReplace));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::RequestReplace));
     REQUIRE(o.state == OrderState::PendingReplace);
 
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::ReplaceAck));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::ReplaceAck));
     REQUIRE(o.state == OrderState::Accepted);
 
     // Can still fill after replace.
-    REQUIRE(OrderStateMachine::apply(o, OrderEvent::Fill));
+    REQUIRE(StateTransitionLogger::apply(o, OrderEvent::Fill));
     REQUIRE(o.state == OrderState::Filled);
+    std::cout << "[STATE] Replace lifecycle complete\n";
 }
 
 // ============================================================================
