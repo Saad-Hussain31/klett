@@ -1,4 +1,5 @@
 #include "risk/risk_manager.h"
+#include "infra/logging.h"
 #include <cmath>
 #include <algorithm>
 
@@ -39,12 +40,18 @@ RiskCheckResult RiskManager::check_order(const Order& order)
 {
     // 1. Kill switch -- single atomic load, no lock.
     if (kill_switch_.is_active()) [[unlikely]]
+    {
+        SOR_LOG_WARN("[RiskManager] Order {} blocked by kill switch", order.id);
         return RiskCheckResult::FailedKillSwitch;
+    }
 
     // 2. Rate limit -- atomic CAS, no lock.
     if (global_limits_.max_orders_per_second > 0) {
         if (!rate_limiter_.try_acquire())
+        {
+            SOR_LOG_WARN("[RiskManager] Order {} rate-limited", order.id);
             return RiskCheckResult::FailedRateLimit;
+        }
     }
 
     // 3 - 8. Limit checks require position info (under lock).
@@ -286,11 +293,13 @@ PositionInfo RiskManager::get_position(const Symbol& symbol) const
 
 void RiskManager::activate_kill_switch()
 {
+    SOR_LOG_CRITICAL("[RiskManager] Kill switch ACTIVATED");
     kill_switch_.activate("Manual kill switch activation");
 }
 
 void RiskManager::deactivate_kill_switch()
 {
+    SOR_LOG_INFO("[RiskManager] Kill switch deactivated");
     kill_switch_.deactivate();
 }
 

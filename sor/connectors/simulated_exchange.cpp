@@ -3,6 +3,7 @@
 // with configurable partial fill, reject, and latency behaviour.
 
 #include "connectors/simulated_exchange.h"
+#include "infra/logging.h"
 
 #include <algorithm>
 #include <cassert>
@@ -51,7 +52,10 @@ namespace sor::connectors
     bool SimulatedExchange::send_order(const Order &order)
     {
         if (!is_connected())
+        {
+            SOR_LOG_WARN("[SimExchange:{}] Order {} rejected: not connected", config_.name, order.id);
             return false;
+        }
 
         std::lock_guard<std::mutex> lock(mutex_);
 
@@ -370,6 +374,7 @@ namespace sor::connectors
 
     void SimulatedExchange::generate_reject(const Order &order, const char *reason)
     {
+        SOR_LOG_WARN("[SimExchange:{}] Rejected order {}: {}", config_.name, order.id, reason);
         ExecutionReport report{};
         report.order_id = order.id;
         report.exec_id = next_exec_id_++;

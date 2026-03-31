@@ -5,8 +5,8 @@
 system:
   name: "SOR-Production"
   log_level: "info"           # trace, debug, info, warn, error, critical
-  log_file: "/var/log/sor/sor.log"
-  log_format: "[%Y-%m-%d %H:%M:%S.%f] [%l] [%t] %v"
+  log_file: "logs/sor.log"    # relative path; directory auto-created
+  log_format: "[%Y-%m-%d %H:%M:%S.%f] [thread %t] [%l] %v"
 
 # ----------------------------------------------------------------------------
 # Gateway configuration

@@ -104,6 +104,7 @@ When `gateway.api.enabled: true`:
 sor/
 ├── app/main.cpp          # End-to-end pipeline executable
 ├── config/               # YAML configuration files
+├── scripts/              # Coverage and utility scripts
 ├── core/                 # Types, Order, MemoryPool, FixedPoint
 ├── routing/              # Strategy implementations
 ├── market_data/          # Aggregator, FeedHandler, OrderBook
@@ -136,6 +137,98 @@ The simulation output includes:
 - Per-venue fill/reject/cancel statistics and latency
 - Routing engine throughput (orders routed, slices generated)
 - ZMQ transport publish counts
+
+## Code Coverage
+
+### Prerequisites
+
+- **gcov** (included with GCC)
+- **lcov** — `sudo apt install lcov`
+- **genhtml** (included with lcov)
+
+### Quick Run
+
+```bash
+./scripts/run_coverage.sh
+```
+
+This builds with coverage, runs all tests, and generates an HTML report at `build_coverage/coverage/index.html`.
+
+### Manual Steps
+
+```bash
+# 1. Configure with coverage enabled
+cmake -B build_coverage -DCMAKE_BUILD_TYPE=Debug -DENABLE_COVERAGE=ON
+
+# 2. Build
+cmake --build build_coverage -j$(nproc)
+
+# 3. Run tests + collect coverage
+cd build_coverage
+make coverage
+
+# 4. Generate HTML report
+make coverage_html
+
+# 5. View
+xdg-open coverage/index.html
+```
+
+### Interpreting Reports
+
+The HTML report shows line and branch coverage per source file. Coverage includes:
+- Routing logic (strategy dispatch, order validation)
+- Order state machine (transitions, events)
+- Risk manager (limit checks, kill switch, rate limiter)
+- Market data processing (aggregation, NBBO, feeds)
+- Execution handling (fills, reroutes, child-order tracking)
+
+Third-party code, system headers, and test code are excluded.
+
+## Logging
+
+The SOR uses **spdlog** with dual sinks: console (color) and rotating file.
+
+### Configuration
+
+In `config/sor_config.yaml`:
+
+```yaml
+system:
+  log_level: "info"           # trace, debug, info, warn, error, critical
+  log_file: "logs/sor.log"    # relative or absolute path; directory auto-created
+```
+
+If no config file is provided, logs default to `logs/sor.log` in the working directory.
+
+### Log Format
+
+```
+[2026-01-01 12:00:00.123456] [thread 1234] [info] [RoutingEngine] Routed order 42 -> 3 slices
+```
+
+Each line includes: timestamp (microsecond precision), thread ID, log level, component tag, and message.
+
+### Log Levels
+
+| Level | Usage |
+|-------|-------|
+| `trace` | Fine-grained execution flow |
+| `debug` | Routing decisions, fill details, child order tracking |
+| `info` | Startup, shutdown, venue connections, simulation milestones |
+| `warn` | Rate limiting, risk rejections, reroutes |
+| `error` | Connection failures, config errors |
+| `critical` | Kill switch activation, no venues available |
+
+### File Rotation
+
+- Max file size: 10 MB
+- Max backup files: 5
+- Flush policy: immediate flush on `warn` and above
+
+### Log Directory
+
+The `logs/` directory is auto-created if missing. If the directory is not writable, the app continues with console-only logging and prints a warning to stderr.
 
 ## Extending
 

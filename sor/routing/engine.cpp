@@ -1,6 +1,7 @@
 #include "routing/engine.h"
 #include "market_data/aggregator.h"
 #include "risk/risk_manager.h"
+#include "infra/logging.h"
 
 namespace sor::routing
 {
@@ -105,6 +106,7 @@ namespace sor::routing
         if (order.symbol.empty())
         {
             ++stats_.orders_rejected;
+            SOR_LOG_WARN("[RoutingEngine] Rejected order {}: empty symbol", order.id);
             if (reject_callback_)
             {
                 reject_callback_(order, "empty symbol");
@@ -115,6 +117,7 @@ namespace sor::routing
         if (order.quantity <= 0)
         {
             ++stats_.orders_rejected;
+            SOR_LOG_WARN("[RoutingEngine] Rejected order {}: invalid quantity {}", order.id, order.quantity);
             if (reject_callback_)
             {
                 reject_callback_(order, "invalid quantity");
@@ -125,6 +128,7 @@ namespace sor::routing
         if (order.type == OrderType::Limit && order.price <= 0)
         {
             ++stats_.orders_rejected;
+            SOR_LOG_WARN("[RoutingEngine] Rejected order {}: limit order with non-positive price", order.id);
             if (reject_callback_)
             {
                 reject_callback_(order, "limit order with non-positive price");
@@ -138,6 +142,8 @@ namespace sor::routing
         if (risk_result != risk::RiskCheckResult::Passed)
         {
             ++stats_.orders_rejected;
+            SOR_LOG_WARN("[RoutingEngine] Order {} failed risk check: {}", order.id,
+                         risk::RiskManager::to_string(risk_result));
             if (reject_callback_)
             {
                 reject_callback_(order, risk::RiskManager::to_string(risk_result));
@@ -192,6 +198,8 @@ namespace sor::routing
         {
             ++stats_.orders_routed;
             stats_.total_slices += static_cast<uint64_t>(decision.slices.size());
+            SOR_LOG_DEBUG("[RoutingEngine] Routed order {} -> {} slices",
+                          order.id, decision.slices.size());
 
             if (order_callback_)
             {
@@ -201,6 +209,7 @@ namespace sor::routing
         else
         {
             ++stats_.orders_rejected;
+            SOR_LOG_WARN("[RoutingEngine] Order {} rejected: strategy returned empty decision", order.id);
             if (reject_callback_)
             {
                 reject_callback_(order, "strategy returned empty decision");

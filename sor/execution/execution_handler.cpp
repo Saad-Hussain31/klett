@@ -1,5 +1,6 @@
 #include "execution/execution_handler.h"
 #include "state/order_state_machine.h"
+#include "infra/logging.h"
 #include <chrono>
 
 namespace sor::execution
@@ -12,6 +13,7 @@ namespace sor::execution
         std::lock_guard lock(mutex_);
         orders_[parent.id] = parent;
         parent_to_children_.try_emplace(parent.id);
+        SOR_LOG_DEBUG("[ExecutionHandler] Tracking parent order {}", parent.id);
     }
 
     void ExecutionHandler::track_child_order(OrderId parent_id, const Order &child)
@@ -20,6 +22,7 @@ namespace sor::execution
         orders_[child.id] = child;
         parent_to_children_[parent_id].push_back(child.id);
         child_to_parent_[child.id] = parent_id;
+        SOR_LOG_DEBUG("[ExecutionHandler] Tracking child order {} -> parent {}", child.id, parent_id);
     }
 
     void ExecutionHandler::on_execution_report(const ExecutionReport &report)
@@ -35,7 +38,10 @@ namespace sor::execution
 
             auto it = orders_.find(report.order_id);
             if (it == orders_.end()) [[unlikely]]
+            {
+                SOR_LOG_WARN("[ExecutionHandler] Exec report for unknown order {}", report.order_id);
                 return;
+            }
 
             Order &order = it->second;
 
@@ -187,10 +193,22 @@ namespace sor::execution
 
             switch (report.state)
             {
-            case OrderState::Filled: ++stats_.total_fills; break;
-            case OrderState::PartiallyFilled: ++stats_.total_partial_fills; break;
-            case OrderState::Rejected: ++stats_.total_rejects; break;
-            case OrderState::Canceled: ++stats_.total_cancels; break;
+            case OrderState::Filled:
+                ++stats_.total_fills;
+                SOR_LOG_DEBUG("[ExecutionHandler] Order {} filled", report.order_id);
+                break;
+            case OrderState::PartiallyFilled:
+                ++stats_.total_partial_fills;
+                SOR_LOG_DEBUG("[ExecutionHandler] Order {} partial fill qty={}", report.order_id, report.last_quantity);
+                break;
+            case OrderState::Rejected:
+                ++stats_.total_rejects;
+                SOR_LOG_WARN("[ExecutionHandler] Order {} rejected", report.order_id);
+                break;
+            case OrderState::Canceled:
+                ++stats_.total_cancels;
+                SOR_LOG_DEBUG("[ExecutionHandler] Order {} canceled", report.order_id);
+                break;
             default: break;
             }
         } // lock released

@@ -156,12 +156,22 @@ int main(int argc, char *argv[])
     }
 
     // -- Logging --------------------------------------------------------------
-    Logger::instance().init("sor", sys_config.log_file,
-                            sys_config.log_level == "debug"    ? LogLevel::Debug
-                            : sys_config.log_level == "trace"  ? LogLevel::Trace
-                            : sys_config.log_level == "warn"   ? LogLevel::Warn
-                            : sys_config.log_level == "error"  ? LogLevel::Error
-                                                               : LogLevel::Info);
+    auto parse_log_level = [](const std::string &s) -> LogLevel {
+        if (s == "trace")    return LogLevel::Trace;
+        if (s == "debug")    return LogLevel::Debug;
+        if (s == "warn")     return LogLevel::Warn;
+        if (s == "error")    return LogLevel::Error;
+        if (s == "critical") return LogLevel::Critical;
+        return LogLevel::Info;
+    };
+
+    // Default log file to logs/sor.log (relative to working directory) if not
+    // configured, so file logging is always active.
+    std::string log_file = sys_config.log_file;
+    if (log_file.empty())
+        log_file = "logs/sor.log";
+
+    Logger::instance().init("sor", log_file, parse_log_level(sys_config.log_level));
     SOR_LOG_INFO("Smart Order Router starting");
 
     // -- Metrics (optional) ---------------------------------------------------

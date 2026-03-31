@@ -4,6 +4,8 @@
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
 
+#include <filesystem>
+#include <iostream>
 #include <vector>
 
 namespace sor::infra
@@ -60,20 +62,41 @@ namespace sor::infra
         std::vector<spdlog::sink_ptr> sinks;
         sinks.push_back(std::make_shared<spdlog::sinks::stdout_color_sink_mt>());
 
-        // Optionally add a 50 MB rotating file sink with 5 backup files.
+        // Optionally add a 10 MB rotating file sink with 5 backup files.
         if (!log_file.empty())
         {
-            constexpr std::size_t max_file_size = 50 * 1024 * 1024; // 50 MB
-            constexpr std::size_t max_files = 5;
-            sinks.push_back(
-                std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                    log_file, max_file_size, max_files));
+            // Auto-create the log directory if it doesn't exist.
+            try
+            {
+                auto parent = std::filesystem::path(log_file).parent_path();
+                if (!parent.empty() && !std::filesystem::exists(parent))
+                    std::filesystem::create_directories(parent);
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "[logging] Warning: could not create log directory: "
+                          << e.what() << "\n";
+            }
+
+            try
+            {
+                constexpr std::size_t max_file_size = 10 * 1024 * 1024; // 10 MB
+                constexpr std::size_t max_files = 5;
+                sinks.push_back(
+                    std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                        log_file, max_file_size, max_files));
+            }
+            catch (const std::exception &e)
+            {
+                std::cerr << "[logging] Warning: could not open log file '"
+                          << log_file << "': " << e.what() << "\n";
+            }
         }
 
         logger_ = std::make_shared<spdlog::logger>(name, sinks.begin(), sinks.end());
 
-        // "[2024-03-30 14:05:23.123456] [info] [12345] order routed to venue A"
-        logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%f] [%l] [%t] %v");
+        // "[2026-01-01 12:00:00.123456] [thread 12345] [info] order routed to venue A"
+        logger_->set_pattern("[%Y-%m-%d %H:%M:%S.%f] [thread %t] [%l] %v");
         logger_->set_level(to_spdlog_level(level));
 
         // Flush on warn and above so critical messages are never lost.

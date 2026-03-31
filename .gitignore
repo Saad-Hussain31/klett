@@ -18,6 +18,7 @@ Thumbs.db
 # -----------------------
 build/
 Build/
+build_coverage/
 cmake-build-*/
 out/
 bin/
@@ -48,6 +49,7 @@ Makefile
 # Logs
 # -----------------------
 *.log
+logs/
 
 # -----------------------
 # Environment files

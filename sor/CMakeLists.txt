@@ -10,6 +10,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(SOR_BUILD_TESTS    "Build unit and integration tests"   ON)
 option(SOR_BUILD_PYTHON   "Build Python bindings"              OFF)
 option(SOR_USE_SANITIZERS "Enable ASan + UBSan"                OFF)
+option(ENABLE_COVERAGE    "Enable coverage reporting"          OFF)
 
 # ── Common compile warnings ──────────────────────────────────────────────────
 add_compile_options(-Wall -Wextra -Wpedantic -Wno-unused-parameter)
@@ -23,6 +24,12 @@ endif()
 if(SOR_USE_SANITIZERS)
     add_compile_options(-fsanitize=address,undefined)
     add_link_options(-fsanitize=address,undefined)
+endif()
+
+# ── Coverage ─────────────────────────────────────────────────────────────────
+if(ENABLE_COVERAGE)
+    add_compile_options(-fprofile-arcs -ftest-coverage -O0 -g)
+    add_link_options(-fprofile-arcs -ftest-coverage)
 endif()
 
 # ── Third-party dependencies ─────────────────────────────────────────────────
@@ -104,6 +111,40 @@ target_link_libraries(sor_app PRIVATE sor)
 if(SOR_BUILD_TESTS)
     enable_testing()
     add_subdirectory(tests)
+endif()
+
+# ── Coverage targets ─────────────────────────────────────────────────────────
+if(ENABLE_COVERAGE AND SOR_BUILD_TESTS)
+    find_program(LCOV lcov)
+    find_program(GENHTML genhtml)
+
+    if(LCOV AND GENHTML)
+        add_custom_target(coverage
+            COMMENT "Running tests and collecting coverage..."
+            COMMAND ${LCOV} --directory ${CMAKE_BINARY_DIR} --zerocounters
+            COMMAND ${CMAKE_CTEST_COMMAND} --test-dir ${CMAKE_BINARY_DIR} --output-on-failure || true
+            COMMAND ${LCOV} --directory ${CMAKE_BINARY_DIR} --capture --output-file ${CMAKE_BINARY_DIR}/coverage.info
+            COMMAND ${LCOV} --remove ${CMAKE_BINARY_DIR}/coverage.info
+                "*/third_party/*" "*/build*/_deps/*" "/usr/*" "*/tests/*" "*/test_*"
+                --output-file ${CMAKE_BINARY_DIR}/coverage_filtered.info
+            COMMAND ${LCOV} --summary ${CMAKE_BINARY_DIR}/coverage_filtered.info
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+
+        add_custom_target(coverage_html
+            COMMENT "Generating HTML coverage report..."
+            DEPENDS coverage
+            COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/coverage
+            COMMAND ${GENHTML} ${CMAKE_BINARY_DIR}/coverage_filtered.info
+                --output-directory ${CMAKE_BINARY_DIR}/coverage
+                --title "SOR Code Coverage"
+                --legend --branch-coverage
+            COMMAND ${CMAKE_COMMAND} -E echo "Coverage report: ${CMAKE_BINARY_DIR}/coverage/index.html"
+            WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
+        )
+    else()
+        message(WARNING "lcov/genhtml not found -- coverage targets disabled")
+    endif()
 endif()
 
 # ── Install targets ──────────────────────────────────────────────────────────
