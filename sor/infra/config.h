@@ -66,6 +66,43 @@ namespace sor::infra
     };
 
     // ---------------------------------------------------------------------------
+    // Gateway configuration
+    // ---------------------------------------------------------------------------
+
+    struct GatewayConfig
+    {
+        struct Fix
+        {
+            bool enabled{false};
+            int32_t listen_port{9876};
+            std::string sender_comp_id{"SOR"};
+            std::string target_comp_id{"CLIENT"};
+            int32_t heartbeat_interval_sec{30};
+        } fix;
+
+        struct Api
+        {
+            bool enabled{false};
+            std::string zmq_order_endpoint{"tcp://*:5555"};
+            std::string zmq_market_data_endpoint{"tcp://*:5556"};
+            std::string zmq_execution_endpoint{"tcp://*:5557"};
+            int32_t max_message_size{65536};
+        } api;
+    };
+
+    // ---------------------------------------------------------------------------
+    // Metrics configuration
+    // ---------------------------------------------------------------------------
+
+    struct MetricsConfig
+    {
+        bool enabled{true};
+        std::string bind_address{"0.0.0.0"};
+        int32_t port{9090};
+        std::string path{"/metrics"};
+    };
+
+    // ---------------------------------------------------------------------------
     // Top-level system configuration
     // ---------------------------------------------------------------------------
 
@@ -78,8 +115,17 @@ namespace sor::infra
         std::vector<VenueConfig> venues;
         StrategyConfig strategy;
         RiskConfig risk;
+        GatewayConfig gateway;
+        MetricsConfig metrics;
         std::string data_dir;
     };
+
+    // ---------------------------------------------------------------------------
+    // Config validation -- returns empty string on success, error message on
+    // failure. Call after loading to fail fast on invalid configuration.
+    // ---------------------------------------------------------------------------
+
+    std::string validate_config(const SystemConfig &config);
 
     // ---------------------------------------------------------------------------
     // ConfigManager -- singleton, thread-safe, supports hot reload

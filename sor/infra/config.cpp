@@ -277,51 +277,83 @@ namespace sor::infra
         // -- Structured parse --
         SystemConfig cfg;
 
-        // System-level fields
+        // System-level fields (supports both flat and nested under "system:" key)
+        auto sys = root["system"];
+        if (sys && sys.IsMap())
+        {
+            if (sys["log_level"])
+                cfg.log_level = sys["log_level"].as<std::string>("info");
+            if (sys["log_file"])
+                cfg.log_file = sys["log_file"].as<std::string>("");
+        }
+        // Flat keys override
         if (root["log_level"])
             cfg.log_level = root["log_level"].as<std::string>("info");
         if (root["log_file"])
             cfg.log_file = root["log_file"].as<std::string>("");
-        if (root["enable_metrics"])
-            cfg.enable_metrics = root["enable_metrics"].as<bool>(true);
-        if (root["metrics_port"])
-            cfg.metrics_port = root["metrics_port"].as<int32_t>(9090);
         if (root["data_dir"])
             cfg.data_dir = root["data_dir"].as<std::string>("");
 
         // -- Venues --
+        // Supports both field-name styles:
+        //   YAML style:   id, adapter, max_order_rate
+        //   Struct style:  venue_id, type, max_orders_per_second
         if (root["venues"] && root["venues"].IsSequence())
         {
             for (const auto &vnode : root["venues"])
             {
                 VenueConfig vc;
-                vc.venue_id = vnode["venue_id"].as<VenueId>(0);
+                vc.venue_id = vnode["id"].as<VenueId>(
+                    vnode["venue_id"].as<VenueId>(0));
                 vc.name = vnode["name"].as<std::string>("");
-                vc.type = vnode["type"].as<std::string>("simulated");
+                vc.type = vnode["adapter"].as<std::string>(
+                    vnode["type"].as<std::string>("simulated"));
                 vc.endpoint = vnode["endpoint"].as<std::string>("");
                 vc.fee_rate = vnode["fee_rate"].as<double>(0.001);
                 vc.enabled = vnode["enabled"].as<bool>(true);
-                vc.max_orders_per_second = vnode["max_orders_per_second"].as<int32_t>(100);
+                vc.max_orders_per_second = vnode["max_order_rate"].as<int32_t>(
+                    vnode["max_orders_per_second"].as<int32_t>(100));
                 cfg.venues.push_back(std::move(vc));
             }
         }
 
         // -- Strategy --
-        if (const auto &snode = root["strategy"]; snode && snode.IsMap())
+        // Supports both "strategy" (flat) and "routing" (nested) sections
         {
-            if (snode["default_strategy"])
-                cfg.strategy.default_strategy = parse_routing_strategy(
-                    snode["default_strategy"].as<std::string>("best_price"));
-            if (snode["vwap_num_slices"])
-                cfg.strategy.vwap_num_slices = snode["vwap_num_slices"].as<int32_t>(10);
-            if (snode["vwap_duration_seconds"])
-                cfg.strategy.vwap_duration_seconds = snode["vwap_duration_seconds"].as<int32_t>(300);
-            if (snode["vwap_urgency"])
-                cfg.strategy.vwap_urgency = snode["vwap_urgency"].as<double>(0.5);
-            if (snode["sweep_min_slice"])
-                cfg.strategy.sweep_min_slice = snode["sweep_min_slice"].as<Quantity>(10);
-            if (snode["ioc_slippage_ticks"])
-                cfg.strategy.ioc_slippage_ticks = snode["ioc_slippage_ticks"].as<int32_t>(2);
+            auto snode = root["strategy"];
+            if (!snode || !snode.IsMap())
+                snode = root["routing"];
+
+            if (snode && snode.IsMap())
+            {
+                if (snode["default_strategy"])
+                    cfg.strategy.default_strategy = parse_routing_strategy(
+                        snode["default_strategy"].as<std::string>("best_price"));
+
+                // VWAP -- check nested strategies.vwap or top-level
+                auto vwap_node = snode["strategies"]["vwap"];
+                if (vwap_node && vwap_node.IsMap())
+                {
+                    if (vwap_node["num_slices"])
+                        cfg.strategy.vwap_num_slices = vwap_node["num_slices"].as<int32_t>(10);
+                    if (vwap_node["interval_sec"])
+                        cfg.strategy.vwap_duration_seconds = static_cast<int32_t>(
+                            vwap_node["interval_sec"].as<double>(15.0) * cfg.strategy.vwap_num_slices);
+                    if (vwap_node["participation_rate"])
+                        cfg.strategy.vwap_urgency = vwap_node["participation_rate"].as<double>(0.05);
+                }
+                // Flat keys (backward compat)
+                if (snode["vwap_num_slices"])
+                    cfg.strategy.vwap_num_slices = snode["vwap_num_slices"].as<int32_t>(10);
+                if (snode["vwap_duration_seconds"])
+                    cfg.strategy.vwap_duration_seconds = snode["vwap_duration_seconds"].as<int32_t>(300);
+                if (snode["vwap_urgency"])
+                    cfg.strategy.vwap_urgency = snode["vwap_urgency"].as<double>(0.5);
+                if (snode["sweep_min_slice"])
+                    cfg.strategy.sweep_min_slice = snode["sweep_min_slice"].as<Quantity>(10);
+                if (snode["ioc_slippage_ticks"])
+                    cfg.strategy.ioc_slippage_ticks = snode["ioc_slippage_ticks"].as<int32_t>(2);
+            }
         }
 
         // -- Risk --
@@ -331,20 +363,166 @@ namespace sor::infra
                 cfg.risk.max_order_quantity = rnode["max_order_quantity"].as<Quantity>(10000);
             if (rnode["max_order_notional"])
                 cfg.risk.max_order_notional = to_price(rnode["max_order_notional"].as<double>(0.0));
+            if (rnode["max_position_per_symbol"])
+                cfg.risk.max_position_quantity = rnode["max_position_per_symbol"].as<Quantity>(0);
             if (rnode["max_position_notional"])
                 cfg.risk.max_position_notional = to_price(rnode["max_position_notional"].as<double>(0.0));
             if (rnode["max_position_quantity"])
                 cfg.risk.max_position_quantity = rnode["max_position_quantity"].as<Quantity>(0);
+            // Nested rate_limiter section
+            if (auto rl = rnode["rate_limiter"]; rl && rl.IsMap())
+            {
+                if (rl["max_orders_per_second"])
+                    cfg.risk.max_orders_per_second = rl["max_orders_per_second"].as<int32_t>(100);
+            }
             if (rnode["max_orders_per_second"])
                 cfg.risk.max_orders_per_second = rnode["max_orders_per_second"].as<int32_t>(100);
             if (rnode["max_open_orders"])
                 cfg.risk.max_open_orders = rnode["max_open_orders"].as<int32_t>(1000);
+            // Kill switch max loss
+            if (auto ks = rnode["kill_switch"]; ks && ks.IsMap())
+            {
+                if (ks["max_loss_threshold"])
+                    cfg.risk.max_loss = to_price(ks["max_loss_threshold"].as<double>(0.0));
+            }
             if (rnode["max_loss"])
                 cfg.risk.max_loss = to_price(rnode["max_loss"].as<double>(0.0));
         }
 
+        // -- Gateway --
+        if (auto gnode = root["gateway"]; gnode && gnode.IsMap())
+        {
+            if (auto fix = gnode["fix"]; fix && fix.IsMap())
+            {
+                cfg.gateway.fix.enabled = fix["enabled"].as<bool>(false);
+                cfg.gateway.fix.listen_port = fix["listen_port"].as<int32_t>(9876);
+                cfg.gateway.fix.sender_comp_id = fix["sender_comp_id"].as<std::string>("SOR");
+                cfg.gateway.fix.target_comp_id = fix["target_comp_id"].as<std::string>("CLIENT");
+                cfg.gateway.fix.heartbeat_interval_sec = fix["heartbeat_interval_sec"].as<int32_t>(30);
+            }
+            if (auto api = gnode["api"]; api && api.IsMap())
+            {
+                cfg.gateway.api.enabled = api["enabled"].as<bool>(false);
+                cfg.gateway.api.zmq_order_endpoint = api["zmq_endpoint"].as<std::string>("tcp://*:5555");
+                cfg.gateway.api.zmq_market_data_endpoint = api["zmq_market_data_endpoint"].as<std::string>("tcp://*:5556");
+                cfg.gateway.api.zmq_execution_endpoint = api["zmq_execution_endpoint"].as<std::string>("tcp://*:5557");
+                cfg.gateway.api.max_message_size = api["max_message_size"].as<int32_t>(65536);
+            }
+        }
+
+        // -- Metrics --
+        if (auto mnode = root["metrics"]; mnode && mnode.IsMap())
+        {
+            if (auto prom = mnode["prometheus"]; prom && prom.IsMap())
+            {
+                cfg.metrics.enabled = prom["enabled"].as<bool>(true);
+                cfg.metrics.bind_address = prom["endpoint"].as<std::string>("0.0.0.0");
+                cfg.metrics.port = prom["port"].as<int32_t>(9090);
+                cfg.metrics.path = prom["path"].as<std::string>("/metrics");
+            }
+        }
+        // Backward compat: top-level enable_metrics / metrics_port
+        if (root["enable_metrics"])
+            cfg.enable_metrics = root["enable_metrics"].as<bool>(true);
+        else
+            cfg.enable_metrics = cfg.metrics.enabled;
+        if (root["metrics_port"])
+            cfg.metrics_port = root["metrics_port"].as<int32_t>(9090);
+        else
+            cfg.metrics_port = cfg.metrics.port;
+
         config_ = std::move(cfg);
         return true;
+    }
+
+    // ---------------------------------------------------------------------------
+    // Config validation
+    // ---------------------------------------------------------------------------
+
+    std::string validate_config(const SystemConfig &config)
+    {
+        // At least one venue must be enabled
+        {
+            bool has_enabled = false;
+            for (const auto &v : config.venues)
+            {
+                if (v.enabled)
+                {
+                    has_enabled = true;
+
+                    if (v.venue_id == 0)
+                        return "Venue '" + v.name + "' has invalid id 0";
+                    if (v.name.empty())
+                        return "Venue id=" + std::to_string(v.venue_id) + " has empty name";
+                    if (v.type != "simulated" && v.type != "fix")
+                        return "Venue '" + v.name + "' has unknown adapter type '" + v.type + "' (expected simulated or fix)";
+                    if (v.max_orders_per_second <= 0)
+                        return "Venue '" + v.name + "' has invalid max_orders_per_second=" + std::to_string(v.max_orders_per_second);
+                    if (v.fee_rate < 0.0 || v.fee_rate > 1.0)
+                        return "Venue '" + v.name + "' has fee_rate outside [0, 1]: " + std::to_string(v.fee_rate);
+                }
+            }
+            if (!has_enabled)
+                return "No enabled venues configured";
+        }
+
+        // Duplicate venue IDs
+        {
+            std::unordered_map<VenueId, std::string> seen;
+            for (const auto &v : config.venues)
+            {
+                if (!v.enabled)
+                    continue;
+                auto it = seen.find(v.venue_id);
+                if (it != seen.end())
+                    return "Duplicate venue id " + std::to_string(v.venue_id) + " ('" + it->second + "' and '" + v.name + "')";
+                seen[v.venue_id] = v.name;
+            }
+        }
+
+        // Risk sanity
+        if (config.risk.max_order_quantity == 0)
+            return "risk.max_order_quantity must be > 0";
+        if (config.risk.max_orders_per_second <= 0)
+            return "risk.max_orders_per_second must be > 0";
+
+        // Log level
+        {
+            const auto &ll = config.log_level;
+            if (ll != "trace" && ll != "debug" && ll != "info" &&
+                ll != "warn" && ll != "error" && ll != "critical")
+                return "Invalid log_level '" + ll + "'";
+        }
+
+        // Metrics port
+        if (config.metrics.enabled || config.enable_metrics)
+        {
+            int port = config.metrics.port;
+            if (port <= 0 || port > 65535)
+                return "Invalid metrics port " + std::to_string(port);
+        }
+
+        // ZMQ endpoints: basic format check (must start with tcp://, ipc://, or inproc://)
+        if (config.gateway.api.enabled)
+        {
+            auto valid_endpoint = [](const std::string &ep) {
+                return ep.starts_with("tcp://") ||
+                       ep.starts_with("ipc://") ||
+                       ep.starts_with("inproc://");
+            };
+            if (!valid_endpoint(config.gateway.api.zmq_order_endpoint))
+                return "Invalid ZMQ order endpoint: " + config.gateway.api.zmq_order_endpoint;
+            if (!valid_endpoint(config.gateway.api.zmq_market_data_endpoint))
+                return "Invalid ZMQ market data endpoint: " + config.gateway.api.zmq_market_data_endpoint;
+            if (!valid_endpoint(config.gateway.api.zmq_execution_endpoint))
+                return "Invalid ZMQ execution endpoint: " + config.gateway.api.zmq_execution_endpoint;
+        }
+
+        // Strategy params
+        if (config.strategy.vwap_num_slices <= 0)
+            return "strategy.vwap_num_slices must be > 0";
+
+        return {}; // empty = valid
     }
 
 } // namespace sor::infra

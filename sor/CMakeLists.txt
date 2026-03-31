@@ -28,17 +28,77 @@ endif()
 # ── Third-party dependencies ─────────────────────────────────────────────────
 add_subdirectory(third_party)
 
-# ── Library targets ──────────────────────────────────────────────────────────
-add_subdirectory(core)
-add_subdirectory(routing)
-add_subdirectory(market_data)
-add_subdirectory(connectors)
-add_subdirectory(gateway)
-add_subdirectory(risk)
-add_subdirectory(state)
-add_subdirectory(execution)
-add_subdirectory(infra)
-add_subdirectory(utils)
+# ── Consolidated library: libsor ─────────────────────────────────────────────
+add_library(sor STATIC
+    # core
+    core/types.cpp
+    core/order.cpp
+    core/memory_pool.cpp
+    core/fixed_point.cpp
+
+    # state
+    state/order_state_machine.cpp
+
+    # risk
+    risk/risk_manager.cpp
+    risk/rate_limiter.cpp
+    risk/kill_switch.cpp
+
+    # market data
+    market_data/aggregator.cpp
+    market_data/book.cpp
+    market_data/feed_handler.cpp
+    market_data/replay_engine.cpp
+
+    # routing
+    routing/engine.cpp
+    routing/best_price.cpp
+    routing/liquidity_sweep.cpp
+    routing/smart_ioc.cpp
+    routing/vwap.cpp
+
+    # connectors
+    connectors/venue_adapter.cpp
+    connectors/simulated_exchange.cpp
+    connectors/fix_adapter.cpp
+
+    # execution
+    execution/execution_handler.cpp
+    execution/fill_manager.cpp
+
+    # gateway
+    gateway/gateway.cpp
+    gateway/fix_gateway.cpp
+    gateway/api_gateway.cpp
+    gateway/zmq_transport.cpp
+
+    # infra
+    infra/config.cpp
+    infra/logging.cpp
+    infra/metrics.cpp
+    infra/tracing.cpp
+
+    # utils
+    utils/time_utils.cpp
+    utils/string_utils.cpp
+)
+
+target_include_directories(sor
+    PUBLIC ${PROJECT_SOURCE_DIR}
+)
+
+target_link_libraries(sor
+    PUBLIC
+        spdlog::spdlog
+        nlohmann_json::nlohmann_json
+        yaml-cpp::yaml-cpp
+        prometheus-cpp::pull
+        cppzmq-static
+)
+
+# ── Main executable: sor_app ─────────────────────────────────────────────────
+add_executable(sor_app app/main.cpp)
+target_link_libraries(sor_app PRIVATE sor)
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 if(SOR_BUILD_TESTS)
@@ -49,20 +109,7 @@ endif()
 # ── Install targets ──────────────────────────────────────────────────────────
 include(GNUInstallDirs)
 
-set(SOR_INSTALLABLE_LIBS
-    sor_core
-    sor_routing
-    sor_market_data
-    sor_connectors
-    sor_gateway
-    sor_risk
-    sor_state
-    sor_execution
-    sor_infra
-    sor_utils
-)
-
-install(TARGETS ${SOR_INSTALLABLE_LIBS}
+install(TARGETS sor sor_app
     ARCHIVE  DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY  DESTINATION ${CMAKE_INSTALL_LIBDIR}
     RUNTIME  DESTINATION ${CMAKE_INSTALL_BINDIR}
