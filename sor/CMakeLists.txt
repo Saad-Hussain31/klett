@@ -8,6 +8,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # ── Build options ────────────────────────────────────────────────────────────
 option(SOR_BUILD_TESTS    "Build unit and integration tests"   ON)
+option(SOR_BUILD_GUI      "Build Dear ImGui trading UI"        OFF)
 option(SOR_BUILD_PYTHON   "Build Python bindings"              OFF)
 option(SOR_USE_SANITIZERS "Enable ASan + UBSan"                OFF)
 option(ENABLE_COVERAGE    "Enable coverage reporting"          OFF)
@@ -56,6 +57,10 @@ add_library(sor STATIC
     market_data/book.cpp
     market_data/feed_handler.cpp
     market_data/replay_engine.cpp
+    market_data/feed_quality_monitor.cpp
+    market_data/provider_factory.cpp
+    market_data/alpaca/alpaca_normalizer.cpp
+    market_data/alpaca/alpaca_provider.cpp
 
     # routing
     routing/engine.cpp
@@ -88,6 +93,9 @@ add_library(sor STATIC
     # utils
     utils/time_utils.cpp
     utils/string_utils.cpp
+
+    # ui (headless-safe controller logic)
+    ui/sor_controller.cpp
 )
 
 target_include_directories(sor
@@ -103,9 +111,54 @@ target_link_libraries(sor
         cppzmq-static
 )
 
+if(SOR_USE_LIVE_FEED)
+    target_link_libraries(sor PUBLIC ixwebsocket)
+    target_compile_definitions(sor PUBLIC SOR_HAS_LIVE_FEED=1)
+endif()
+
 # ── Main executable: sor_app ─────────────────────────────────────────────────
 add_executable(sor_app app/main.cpp)
 target_link_libraries(sor_app PRIVATE sor)
+
+# ── GUI executable: sor_gui ─────────────────────────────────────────────────
+if(SOR_BUILD_GUI)
+    find_package(OpenGL REQUIRED)
+
+    # ImGui sources compiled directly into the executable
+    set(IMGUI_SOURCES
+        ${imgui_SOURCE_DIR}/imgui.cpp
+        ${imgui_SOURCE_DIR}/imgui_demo.cpp
+        ${imgui_SOURCE_DIR}/imgui_draw.cpp
+        ${imgui_SOURCE_DIR}/imgui_tables.cpp
+        ${imgui_SOURCE_DIR}/imgui_widgets.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_sdl2.cpp
+        ${imgui_SOURCE_DIR}/backends/imgui_impl_opengl3.cpp
+    )
+
+    add_executable(sor_gui
+        ui/sor_ui_app.cpp
+        ui/sor_ui.cpp
+        ui/panels/order_entry.cpp
+        ui/panels/order_book.cpp
+        ui/panels/market_data.cpp
+        ui/panels/execution.cpp
+        ui/panels/log_panel.cpp
+        ui/panels/controls.cpp
+        ${IMGUI_SOURCES}
+    )
+
+    target_include_directories(sor_gui PRIVATE
+        ${imgui_SOURCE_DIR}
+        ${imgui_SOURCE_DIR}/backends
+    )
+
+    target_link_libraries(sor_gui PRIVATE
+        sor
+        SDL2::SDL2-static
+        SDL2::SDL2main
+        OpenGL::GL
+    )
+endif()
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 if(SOR_BUILD_TESTS)

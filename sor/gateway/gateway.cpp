@@ -44,6 +44,10 @@ namespace sor::gateway
 
                 risk_manager_.on_fill(order.symbol, order.side,
                                       report.last_quantity, report.last_price);
+
+                // Notify external observer (ZMQ publishing, etc.)
+                if (fill_observer_)
+                    fill_observer_(order, report);
             });
 
         // On parent order completion.
@@ -51,6 +55,10 @@ namespace sor::gateway
             [this](const Order &order)
             {
                 ++stats_.orders_completed;
+
+                // Notify external observer.
+                if (completion_observer_)
+                    completion_observer_(order);
             });
 
         // On reroute: re-route the parent order for its remaining quantity.
@@ -191,6 +199,16 @@ namespace sor::gateway
     Gateway::Stats Gateway::get_stats() const
     {
         return stats_;
+    }
+
+    void Gateway::set_fill_observer(FillObserver cb)
+    {
+        fill_observer_ = std::move(cb);
+    }
+
+    void Gateway::set_completion_observer(CompletionObserver cb)
+    {
+        completion_observer_ = std::move(cb);
     }
 
     // ---------------------------------------------------------------------------

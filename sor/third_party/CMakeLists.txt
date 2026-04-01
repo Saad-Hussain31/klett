@@ -79,6 +79,44 @@ FetchContent_Declare(
     GIT_SHALLOW    TRUE
 )
 
+# ── ixwebsocket (WebSocket client for live market data) ─────────────────────
+option(SOR_USE_LIVE_FEED "Build with live market data support (ixwebsocket)" ON)
+
+if(SOR_USE_LIVE_FEED)
+    set(USE_TLS          ON  CACHE BOOL "" FORCE)
+    set(USE_OPEN_SSL     ON  CACHE BOOL "" FORCE)
+    set(IXWEBSOCKET_INSTALL OFF CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        ixwebsocket
+        GIT_REPOSITORY https://github.com/machinezone/IXWebSocket.git
+        GIT_TAG        v11.4.5
+        GIT_SHALLOW    TRUE
+    )
+endif()
+
+# ── Dear ImGui + SDL2 (GUI-only) ────────────────────────────────────────────
+if(SOR_BUILD_GUI)
+    FetchContent_Declare(
+        imgui
+        GIT_REPOSITORY https://github.com/ocornut/imgui.git
+        GIT_TAG        v1.91.8-docking
+        GIT_SHALLOW    TRUE
+    )
+
+    set(SDL_SHARED  OFF CACHE BOOL "" FORCE)
+    set(SDL_STATIC  ON  CACHE BOOL "" FORCE)
+    set(SDL_TEST    OFF CACHE BOOL "" FORCE)
+    set(SDL2_DISABLE_INSTALL ON CACHE BOOL "" FORCE)
+
+    FetchContent_Declare(
+        SDL2
+        GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+        GIT_TAG        release-2.30.11
+        GIT_SHALLOW    TRUE
+    )
+endif()
+
 # ── Catch2 (test-only) ──────────────────────────────────────────────────────
 if(SOR_BUILD_TESTS)
     set(CATCH_BUILD_EXAMPLES   OFF CACHE BOOL "" FORCE)
@@ -112,6 +150,16 @@ set(ZeroMQ_DIR "${libzmq_BINARY_DIR}" CACHE PATH "" FORCE)
 FetchContent_MakeAvailable(cppzmq)
 
 FetchContent_MakeAvailable(prometheus-cpp)
+
+if(SOR_USE_LIVE_FEED)
+    FetchContent_MakeAvailable(ixwebsocket)
+    set(SOR_USE_LIVE_FEED ON PARENT_SCOPE)
+endif()
+
+if(SOR_BUILD_GUI)
+    FetchContent_MakeAvailable(imgui SDL2)
+    set(imgui_SOURCE_DIR "${imgui_SOURCE_DIR}" PARENT_SCOPE)
+endif()
 
 if(SOR_BUILD_TESTS)
     FetchContent_MakeAvailable(Catch2)

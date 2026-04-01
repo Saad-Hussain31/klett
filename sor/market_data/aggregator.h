@@ -10,6 +10,7 @@
 #include <vector>
 #include <functional>
 #include <chrono>
+#include <shared_mutex>
 
 namespace sor::market_data
 {
@@ -87,12 +88,15 @@ namespace sor::market_data
     private:
         void recalculate_nbbo(const Symbol &symbol);
         void build_aggregated_book(const Symbol &symbol, AggregatedBook &out) const;
+        // Internal lookup without locking (caller must hold mutex_)
+        const OrderBook *get_venue_book_unlocked(VenueId venue_id, const Symbol &symbol) const;
 
         // venue_id -> (symbol -> OrderBook)
         std::unordered_map<VenueId, std::unordered_map<Symbol, OrderBook>> venue_books_;
         std::unordered_map<Symbol, NBBO> nbbo_cache_;
         std::vector<VenueId> venues_;
         NBBOCallback nbbo_callback_;
+        mutable std::shared_mutex mutex_;
     };
 
 } // namespace sor::market_data

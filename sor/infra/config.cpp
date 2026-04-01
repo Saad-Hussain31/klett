@@ -5,6 +5,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace sor::infra
@@ -431,6 +432,49 @@ namespace sor::infra
         else
             cfg.metrics_port = cfg.metrics.port;
 
+        // -- Market Data --
+        if (auto mdnode = root["market_data"]; mdnode && mdnode.IsMap())
+        {
+            cfg.market_data.provider = mdnode["provider"].as<std::string>("simulated");
+
+            if (auto alpaca = mdnode["alpaca"]; alpaca && alpaca.IsMap())
+            {
+                cfg.market_data.alpaca_api_key = alpaca["api_key"].as<std::string>("");
+                cfg.market_data.alpaca_api_secret = alpaca["api_secret"].as<std::string>("");
+                cfg.market_data.alpaca_ws_url = alpaca["ws_url"].as<std::string>(
+                    "wss://stream.data.alpaca.markets/v2/iex");
+                cfg.market_data.alpaca_use_sip = alpaca["use_sip"].as<bool>(false);
+            }
+
+            if (mdnode["symbols"] && mdnode["symbols"].IsSequence())
+            {
+                for (const auto &snode : mdnode["symbols"])
+                    cfg.market_data.symbols.push_back(snode.as<std::string>());
+            }
+
+            cfg.market_data.staleness_threshold_ms =
+                mdnode["staleness_threshold_ms"].as<int32_t>(5000);
+            cfg.market_data.reconnect_delay_sec =
+                mdnode["reconnect_delay_sec"].as<int32_t>(5);
+            cfg.market_data.max_reconnect_attempts =
+                mdnode["max_reconnect_attempts"].as<int32_t>(10);
+
+            // Expand ${ENV_VAR} patterns in API keys
+            auto expand_env = [](std::string &val) {
+                if (val.size() > 3 && val.front() == '$' && val[1] == '{' && val.back() == '}')
+                {
+                    std::string var_name = val.substr(2, val.size() - 3);
+                    const char *env_val = std::getenv(var_name.c_str());
+                    if (env_val)
+                        val = env_val;
+                    else
+                        val.clear();
+                }
+            };
+            expand_env(cfg.market_data.alpaca_api_key);
+            expand_env(cfg.market_data.alpaca_api_secret);
+        }
+
         config_ = std::move(cfg);
         return true;
     }
@@ -521,6 +565,26 @@ namespace sor::infra
         // Strategy params
         if (config.strategy.vwap_num_slices <= 0)
             return "strategy.vwap_num_slices must be > 0";
+
+        // Market data provider
+        {
+            const auto &md = config.market_data;
+            if (md.provider != "simulated" && md.provider != "alpaca" && md.provider != "replay")
+                return "Unknown market_data.provider '" + md.provider + "' (expected simulated, alpaca, or replay)";
+            if (md.provider == "alpaca")
+            {
+                if (md.alpaca_api_key.empty())
+                    return "market_data.alpaca.api_key is required when provider is 'alpaca'";
+                if (md.alpaca_api_secret.empty())
+                    return "market_data.alpaca.api_secret is required when provider is 'alpaca'";
+                if (md.symbols.empty())
+                    return "market_data.symbols must not be empty when provider is 'alpaca'";
+            }
+            if (md.staleness_threshold_ms <= 0)
+                return "market_data.staleness_threshold_ms must be > 0";
+            if (md.reconnect_delay_sec <= 0)
+                return "market_data.reconnect_delay_sec must be > 0";
+        }
 
         return {}; // empty = valid
     }

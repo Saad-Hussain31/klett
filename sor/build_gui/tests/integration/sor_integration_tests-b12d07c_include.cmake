@@ -1,0 +1,5 @@
+if(EXISTS "/home/saad/personal/klett/sor/build_gui/tests/integration/sor_integration_tests-b12d07c_tests.cmake")
+  include("/home/saad/personal/klett/sor/build_gui/tests/integration/sor_integration_tests-b12d07c_tests.cmake")
+else()
+  add_test(sor_integration_tests_NOT_BUILT-b12d07c sor_integration_tests_NOT_BUILT-b12d07c)
+endif()

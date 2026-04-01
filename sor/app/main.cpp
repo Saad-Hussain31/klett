@@ -1,16 +1,18 @@
 // sor_app -- Smart Order Router main executable.
 //
-// Wires together the full end-to-end pipeline:
-//   config -> logging -> metrics -> market data -> risk -> routing
-//   -> venue connectors -> execution handler -> fill reports
+// Long-running, multi-threaded, event-driven trading service.
 //
-// In simulation mode (default), the app:
-//   1. Loads config from YAML (or uses built-in defaults)
-//   2. Creates simulated exchanges with configurable fill behavior
-//   3. Generates synthetic market data
-//   4. Injects a batch of test orders
-//   5. Routes, executes, and reports results
-//   6. Prints statistics and exits cleanly
+// Thread model (6 threads):
+//   1. Main thread         — signal handling, startup, daemon wait loop, shutdown
+//   2. Gateway::order      — drains MPSC order+cancel queues, routes, dispatches
+//   3. Gateway::exec       — drains MPSC report queue, processes execution reports
+//   4. ZmqTransport::req   — REP socket recv loop, dispatches through ApiGateway
+//   5. md_feed             — continuously generates ticks from SimulatedFeedHandler
+//   6. matching            — continuously runs exchange matching engines
+//
+// Orders arrive via ZMQ REQ/REP through ApiGateway → Gateway → RoutingEngine
+// → SimulatedExchange. Execution reports flow back through lock-free queues.
+// Market data and execution events are published via ZMQ PUB sockets.
 
 #include "core/types.h"
 #include "core/order.h"
@@ -18,7 +20,6 @@
 #include "infra/logging.h"
 #include "infra/metrics.h"
 #include "risk/risk_manager.h"
-#include "risk/rate_limiter.h"
 #include "routing/engine.h"
 #include "routing/best_price.h"
 #include "routing/liquidity_sweep.h"
@@ -26,10 +27,11 @@
 #include "routing/vwap.h"
 #include "market_data/aggregator.h"
 #include "market_data/feed_handler.h"
-#include "market_data/book.h"
+#include "market_data/provider.h"
+#include "market_data/provider_factory.h"
 #include "connectors/simulated_exchange.h"
-#include "execution/execution_handler.h"
-#include "state/order_state_machine.h"
+#include "gateway/gateway.h"
+#include "gateway/api_gateway.h"
 #include "gateway/zmq_transport.h"
 
 #include <nlohmann/json.hpp>
@@ -45,13 +47,9 @@
 
 using namespace sor;
 using namespace sor::connectors;
-using namespace sor::execution;
 using namespace sor::infra;
 using namespace sor::market_data;
 using namespace sor::risk;
-// Note: NOT using namespace sor::routing to avoid RoutingStrategy
-// name clash between the enum (sor::RoutingStrategy) and the class
-// (sor::routing::RoutingStrategy).
 
 // ---------------------------------------------------------------------------
 // Globals for signal handling
@@ -62,28 +60,6 @@ static void signal_handler(int /*sig*/)
 {
     g_running.store(false, std::memory_order_release);
 }
-
-// ---------------------------------------------------------------------------
-// Per-venue rate limiter wrapper
-// ---------------------------------------------------------------------------
-struct VenueConnection
-{
-    std::unique_ptr<SimulatedExchange> exchange;
-    RateLimiter rate_limiter;
-    VenueId id;
-
-    VenueConnection(std::unique_ptr<SimulatedExchange> ex, int32_t max_rate, VenueId vid)
-        : exchange(std::move(ex)), rate_limiter(max_rate), id(vid) {}
-
-    VenueConnection(VenueConnection &&o) noexcept
-        : exchange(std::move(o.exchange)),
-          rate_limiter(o.rate_limiter.max_rate()),
-          id(o.id) {}
-
-    VenueConnection &operator=(VenueConnection &&) = delete;
-    VenueConnection(const VenueConnection &) = delete;
-    VenueConnection &operator=(const VenueConnection &) = delete;
-};
 
 // ---------------------------------------------------------------------------
 // main
@@ -107,7 +83,6 @@ int main(int argc, char *argv[])
         sys_config = config_mgr.get_config();
         std::cout << "[init] Loaded config from " << config_path << "\n";
 
-        // Validate: fail fast on bad config
         auto err = validate_config(sys_config);
         if (!err.empty())
         {
@@ -165,8 +140,6 @@ int main(int argc, char *argv[])
         return LogLevel::Info;
     };
 
-    // Default log file to logs/sor.log (relative to working directory) if not
-    // configured, so file logging is always active.
     std::string log_file = sys_config.log_file;
     if (log_file.empty())
         log_file = "logs/sor.log";
@@ -185,8 +158,14 @@ int main(int argc, char *argv[])
             SOR_LOG_WARN("Failed to start metrics endpoint on port {}", metrics_port);
     }
 
-    // -- Venue connectors with per-venue rate limiters ------------------------
-    std::vector<VenueConnection> venues;
+    // -- Gateway + venue connectors -------------------------------------------
+    gateway::Gateway::Config gw_config;
+    gw_config.config_path = config_path;
+    gateway::Gateway gw(gw_config);
+
+    // Register venues through Gateway. Keep raw pointers for matching thread.
+    std::vector<SimulatedExchange *> exchange_ptrs;
+
     for (const auto &vc : sys_config.venues)
     {
         if (!vc.enabled)
@@ -204,67 +183,20 @@ int main(int argc, char *argv[])
         exc.fee_rate = vc.fee_rate;
 
         auto exchange = std::make_unique<SimulatedExchange>(exc);
-        if (!exchange->connect())
-        {
-            SOR_LOG_ERROR("Failed to connect venue {} ({})", vc.venue_id, vc.name);
-            continue;
-        }
+        exchange_ptrs.push_back(exchange.get());
 
-        SOR_LOG_INFO("Connected venue {} ({}) | rate_limit={}/s fee={:.4f}",
-                     vc.venue_id, vc.name, vc.max_orders_per_second, vc.fee_rate);
-        venues.emplace_back(std::move(exchange), vc.max_orders_per_second, vc.venue_id);
+        gw.add_venue(std::move(exchange));
+        SOR_LOG_INFO("Registered venue {} ({}) | fee={:.4f}", vc.venue_id, vc.name, vc.fee_rate);
     }
 
-    if (venues.empty())
+    if (exchange_ptrs.empty())
     {
         SOR_LOG_CRITICAL("No venues available, exiting");
         return 1;
     }
 
-    // -- Market data ----------------------------------------------------------
-    MarketDataAggregator md_aggregator;
-    std::vector<std::unique_ptr<SimulatedFeedHandler>> feeds;
-
-    const Symbol symbol("AAPL");
-    const Price base_mid = to_price(150.0);
-
-    for (auto &vc : venues)
-    {
-        md_aggregator.register_venue(vc.id);
-
-        SimulatedFeedHandler::Config fc;
-        fc.symbol = symbol;
-        fc.venue_id = vc.id;
-        fc.initial_mid_price = base_mid;
-        fc.tick_size = to_price(0.01);
-        fc.max_depth = 10;
-        fc.base_quantity = 100;
-        // Use closely-related seeds that produce correlated but slightly
-        // different books per venue (like real market microstructure).
-        fc.rng_seed = 0xDEADBEEF12345678ULL;
-        fc.volatility = 0.0001; // low volatility so venues stay in sync
-
-        auto feed = std::make_unique<SimulatedFeedHandler>(fc);
-        feed->set_book_callback(
-            [&md_aggregator](VenueId vid, const Symbol &sym, const OrderBook &book) {
-                md_aggregator.on_book_update(vid, sym, book);
-            });
-        feed->start();
-        feeds.push_back(std::move(feed));
-    }
-
-    // Generate initial ticks to populate order books
-    for (auto &feed : feeds)
-    {
-        for (int i = 0; i < 10; ++i)
-            feed->generate_tick();
-    }
-
-    SOR_LOG_INFO("Market data initialized for {} with {} venue feeds",
-                 symbol.c_str(), feeds.size());
-
     // -- Risk manager ---------------------------------------------------------
-    RiskManager risk_mgr;
+    auto &risk_mgr = gw.risk_manager();
     RiskLimits global_limits;
     global_limits.max_order_quantity = sys_config.risk.max_order_quantity;
     global_limits.max_order_notional = sys_config.risk.max_order_notional;
@@ -273,56 +205,95 @@ int main(int argc, char *argv[])
     risk_mgr.set_global_limits(global_limits);
 
     // -- Routing engine -------------------------------------------------------
-    routing::RoutingEngine router(md_aggregator, risk_mgr);
+    auto &router = gw.routing_engine();
     router.register_strategy(std::make_unique<routing::BestPriceStrategy>());
     router.register_strategy(std::make_unique<routing::LiquiditySweepStrategy>());
     router.register_strategy(std::make_unique<routing::SmartIOCStrategy>());
     router.register_strategy(std::make_unique<routing::VWAPStrategy>());
 
-    // Register venue scores
-    for (auto &vc : venues)
+    for (auto *ex : exchange_ptrs)
     {
         routing::VenueScore vs;
-        vs.venue_id = vc.id;
-        vs.latency_us = static_cast<double>(vc.exchange->avg_latency().count());
+        vs.venue_id = ex->venue_id();
+        vs.latency_us = static_cast<double>(ex->avg_latency().count());
         vs.fill_rate = 0.95;
         vs.fee_rate = 0.001;
         vs.is_available = true;
-        router.update_venue_score(vc.id, vs);
+        router.update_venue_score(ex->venue_id(), vs);
     }
+    SOR_LOG_INFO("Routing engine initialized with 4 strategies, {} venues", exchange_ptrs.size());
 
-    SOR_LOG_INFO("Routing engine initialized with 4 strategies");
+    // -- Market data feeds ----------------------------------------------------
+    auto &md_aggregator = gw.market_data();
+    std::vector<std::unique_ptr<SimulatedFeedHandler>> feeds;
+    std::unique_ptr<MarketDataProvider> live_provider;
 
-    // -- Execution handler ----------------------------------------------------
-    ExecutionHandler exec_handler;
+    const bool live_mode = (sys_config.market_data.provider != "simulated");
+    const Symbol symbol("AAPL");
+    const Price base_mid = to_price(150.0);
 
-    // Wire venue execution callbacks -> execution handler
-    for (auto &vc : venues)
+    if (live_mode)
     {
-        vc.exchange->set_execution_callback(
-            [&exec_handler](const ExecutionReport &report) {
-                exec_handler.on_execution_report(report);
-            });
+        live_provider = create_provider(sys_config.market_data);
+        if (!live_provider)
+        {
+            SOR_LOG_CRITICAL("Failed to create market data provider '{}'",
+                             sys_config.market_data.provider);
+            return 1;
+        }
+
+        live_provider->set_aggregator(md_aggregator);
+        constexpr VenueId alpaca_venue_id = 100;
+        md_aggregator.register_venue(alpaca_venue_id);
+
+        if (!live_provider->connect())
+        {
+            SOR_LOG_CRITICAL("Failed to connect to market data provider");
+            return 1;
+        }
+
+        for (const auto &sym : sys_config.market_data.symbols)
+            live_provider->subscribe(Symbol(sym));
+
+        SOR_LOG_INFO("Live market data from {} — {} symbols",
+                     live_provider->name(), sys_config.market_data.symbols.size());
+    }
+    else
+    {
+        for (auto *ex : exchange_ptrs)
+        {
+            SimulatedFeedHandler::Config fc;
+            fc.symbol = symbol;
+            fc.venue_id = ex->venue_id();
+            fc.initial_mid_price = base_mid;
+            fc.tick_size = to_price(0.01);
+            fc.max_depth = 10;
+            fc.base_quantity = 100;
+            fc.rng_seed = 0xDEADBEEF12345678ULL;
+            fc.volatility = 0.0001;
+
+            auto feed = std::make_unique<SimulatedFeedHandler>(fc);
+            feed->set_book_callback(
+                [&md_aggregator](VenueId vid, const Symbol &sym, const OrderBook &book) {
+                    md_aggregator.on_book_update(vid, sym, book);
+                });
+            feed->start();
+            feeds.push_back(std::move(feed));
+        }
+
+        // Generate initial ticks to populate order books
+        for (auto &feed : feeds)
+            for (int i = 0; i < 10; ++i)
+                feed->generate_tick();
+
+        SOR_LOG_INFO("Simulated market data initialized for {} with {} venue feeds",
+                     symbol.c_str(), feeds.size());
     }
 
-    // Execution handler callbacks (set after ZMQ transport is configured below)
-    std::atomic<uint64_t> total_fills{0};
-    std::atomic<uint64_t> total_completions{0};
-
-    // Reroute tracking: collect reroute requests, process them in the main loop
-    // to avoid re-entrant send_order -> exec_callback -> reroute chains.
-    std::vector<OrderId> pending_reroutes;
-    std::mutex reroute_mutex;
-
-    exec_handler.set_reroute_callback(
-        [&pending_reroutes, &reroute_mutex](Order &parent) {
-            std::lock_guard lk(reroute_mutex);
-            pending_reroutes.push_back(parent.id);
-        });
-
-    // -- ZMQ transport (real IPC) ---------------------------------------------
+    // -- ZMQ transport + ApiGateway -------------------------------------------
+    gateway::ApiGateway api_gw(gw);
     std::unique_ptr<gateway::ZmqTransport> zmq_transport;
-    bool zmq_enabled = sys_config.gateway.api.enabled;
+    const bool zmq_enabled = sys_config.gateway.api.enabled;
 
     if (zmq_enabled)
     {
@@ -333,10 +304,9 @@ int main(int argc, char *argv[])
 
         zmq_transport = std::make_unique<gateway::ZmqTransport>(zc);
 
-        // Wire the request handler to process JSON order submissions
+        // Dispatch ZMQ requests through ApiGateway by action field
         zmq_transport->set_request_handler(
-            [&router, &exec_handler](const std::string &json_body)
-                -> std::string {
+            [&api_gw](const std::string &json_body) -> std::string {
                 using json = nlohmann::json;
                 json response;
 
@@ -345,20 +315,18 @@ int main(int argc, char *argv[])
                     auto req = json::parse(json_body);
                     std::string action = req.value("action", "status");
 
-                    if (action == "status")
-                    {
-                        auto rs = router.get_stats();
-                        auto es = exec_handler.get_stats();
-                        response["status"] = "ok";
-                        response["orders_routed"] = rs.orders_routed;
-                        response["orders_rejected"] = rs.orders_rejected;
-                        response["total_fills"] = es.total_fills;
-                        response["total_partial_fills"] = es.total_partial_fills;
-                    }
+                    if (action == "new_order")
+                        return api_gw.handle_new_order(json_body);
+                    else if (action == "cancel_order")
+                        return api_gw.handle_cancel_order(json_body);
+                    else if (action == "query_order")
+                        return api_gw.handle_query_order(json_body);
+                    else if (action == "status")
+                        return api_gw.handle_status(json_body);
                     else
                     {
-                        response["status"] = "ok";
-                        response["message"] = "action not implemented in simulation mode";
+                        response["status"] = "error";
+                        response["message"] = "unknown action: " + action;
                     }
                 }
                 catch (const std::exception &e)
@@ -371,10 +339,8 @@ int main(int argc, char *argv[])
             });
 
         if (zmq_transport->start())
-            SOR_LOG_INFO("ZMQ transport enabled: orders={} md={} exec={}",
-                         sys_config.gateway.api.zmq_order_endpoint,
-                         sys_config.gateway.api.zmq_market_data_endpoint,
-                         sys_config.gateway.api.zmq_execution_endpoint);
+            SOR_LOG_INFO("ZMQ transport started: orders={} md={} exec={}",
+                         zc.order_endpoint, zc.market_data_endpoint, zc.execution_endpoint);
         else
             SOR_LOG_WARN("ZMQ transport failed to start");
     }
@@ -383,7 +349,7 @@ int main(int argc, char *argv[])
         SOR_LOG_INFO("ZMQ transport disabled (set gateway.api.enabled=true in config)");
     }
 
-    // Wire market data publisher: publish NBBO updates via ZMQ PUB
+    // -- Wire NBBO publishing via ZMQ PUB ------------------------------------
     md_aggregator.set_nbbo_callback(
         [&zmq_transport, zmq_enabled](const Symbol &sym, const market_data::NBBO &nbbo) {
             if (!zmq_enabled)
@@ -403,10 +369,9 @@ int main(int argc, char *argv[])
             zmq_transport->publish_market_data(sym.to_string(), payload.dump());
         });
 
-    // Wire execution event publisher: publish fills/completions via ZMQ PUB
-    exec_handler.set_fill_callback(
-        [&total_fills, &zmq_transport, zmq_enabled](const Order &order, const ExecutionReport &report) {
-            total_fills.fetch_add(1, std::memory_order_relaxed);
+    // -- Wire fill/completion observers for ZMQ PUB --------------------------
+    gw.set_fill_observer(
+        [&zmq_transport, zmq_enabled](const Order &order, const ExecutionReport &report) {
             SOR_LOG_DEBUG("FILL order={} qty={} price={:.2f} cum={}/{}",
                           order.id, report.last_quantity,
                           to_double(report.last_price),
@@ -429,9 +394,8 @@ int main(int argc, char *argv[])
             zmq_transport->publish_execution_event("FILL", payload.dump());
         });
 
-    exec_handler.set_completion_callback(
-        [&total_completions, &zmq_transport, zmq_enabled](const Order &order) {
-            total_completions.fetch_add(1, std::memory_order_relaxed);
+    gw.set_completion_observer(
+        [&zmq_transport, zmq_enabled](const Order &order) {
             SOR_LOG_INFO("COMPLETE order={} filled={} avg_price={:.2f}",
                          order.id, order.filled_quantity,
                          to_double(order.avg_fill_price));
@@ -450,285 +414,112 @@ int main(int argc, char *argv[])
             zmq_transport->publish_execution_event("COMPLETE", payload.dump());
         });
 
-    // -- Generate and route orders --------------------------------------------
-    // Set initial exchange market prices from NBBO
+    // -- Initialize and start Gateway -----------------------------------------
+    if (!gw.initialize())
     {
-        auto nbbo = md_aggregator.get_nbbo(symbol);
-        if (nbbo.valid())
-        {
-            for (auto &vc : venues)
-                vc.exchange->set_market_price(nbbo.best_bid, nbbo.best_ask);
-        }
+        SOR_LOG_CRITICAL("Gateway initialization failed");
+        return 1;
     }
-    SOR_LOG_INFO("=== Starting simulation ===");
+    gw.start();
+    SOR_LOG_INFO("Gateway started (order_thread + exec_thread running)");
 
-    constexpr int NUM_ORDERS = 20;
-    std::atomic<OrderId> order_id_gen{1};
+    // -- Market data feed thread (NEW) ----------------------------------------
+    std::thread md_feed_thread([&feeds, &symbol, &md_aggregator]() {
+        SOR_LOG_INFO("Market data feed thread started");
 
-    // -- Helper: create child order from a routing slice and send to venue ----
-    auto send_child = [&](OrderId parent_id, const Order &parent,
-                          const auto &slice) -> bool {
-        Order child{};
-        child.id = order_id_gen.fetch_add(1, std::memory_order_relaxed);
-        child.parent_order_id = parent_id;
-        child.symbol = parent.symbol;
-        child.side = parent.side;
-        child.type = slice.type;
-        child.tif = slice.tif;
-        child.price = slice.price;
-        child.quantity = slice.quantity;
-        child.remaining_quantity = slice.quantity;
-        child.target_venue = slice.venue_id;
-        child.state = OrderState::New;
-        child.create_time = std::chrono::steady_clock::now();
-
-        state::OrderStateMachine::apply(child, state::OrderEvent::Submit);
-        exec_handler.track_child_order(parent_id, child);
-
-        for (auto &vc : venues)
+        while (g_running.load(std::memory_order_relaxed))
         {
-            if (vc.id == slice.venue_id)
+            for (auto &feed : feeds)
+                feed->generate_tick();
+
+            // TODO (Saad): REMOVE - Market data debug
+            auto nbbo = md_aggregator.get_nbbo(symbol);
+            if (nbbo.valid())
             {
-                if (vc.rate_limiter.try_acquire())
-                {
-                    vc.exchange->send_order(child);
-                    return true;
-                }
-                SOR_LOG_WARN("Rate limit hit venue={} order={}", vc.id, child.id);
-                return false;
-            }
-        }
-        return false;
-    };
-
-    struct OrderResult
-    {
-        OrderId id;
-        sor::RoutingStrategy strategy;
-        int child_count;
-        bool routed;
-    };
-    std::vector<OrderResult> results;
-
-    for (int i = 0; i < NUM_ORDERS && g_running.load(std::memory_order_relaxed); ++i)
-    {
-        // Refresh market data
-        for (auto &feed : feeds)
-            feed->generate_tick();
-
-        // Create parent order
-        Order order{};
-        order.id = order_id_gen.fetch_add(1, std::memory_order_relaxed);
-        order.symbol = symbol;
-        order.side = (i % 2 == 0) ? Side::Buy : Side::Sell;
-        order.type = OrderType::Limit;
-        order.tif = TimeInForce::GTC;
-        order.quantity = 50 + (i * 10);
-        order.remaining_quantity = order.quantity;
-        order.state = OrderState::New;
-        order.create_time = std::chrono::steady_clock::now();
-
-        // Assign strategy round-robin
-        switch (i % 4)
-        {
-        case 0: order.strategy = sor::RoutingStrategy::BestPrice; break;
-        case 1: order.strategy = sor::RoutingStrategy::LiquiditySweep; break;
-        case 2: order.strategy = sor::RoutingStrategy::SmartIOC; break;
-        case 3: order.strategy = sor::RoutingStrategy::VWAP; break;
-        }
-
-        // Set price based on NBBO
-        auto nbbo = md_aggregator.get_nbbo(symbol);
-        if (nbbo.valid())
-        {
-            order.price = (order.side == Side::Buy) ? nbbo.best_ask : nbbo.best_bid;
-        }
-        else
-        {
-            order.price = base_mid;
-        }
-
-        // Submit through state machine
-        state::OrderStateMachine::apply(order, state::OrderEvent::Submit);
-
-        // Route
-        auto decision = router.route_order(order);
-
-        OrderResult result;
-        result.id = order.id;
-        result.strategy = order.strategy;
-        result.child_count = 0;
-        result.routed = decision.valid();
-
-        if (decision.valid())
-        {
-            exec_handler.track_order(order);
-
-            for (const auto &slice : decision.slices)
-            {
-                if (send_child(order.id, order, slice))
-                    ++result.child_count;
-            }
-        }
-        else
-        {
-            SOR_LOG_WARN("Order {} rejected by router", order.id);
-        }
-
-        results.push_back(result);
-    }
-
-    // -- Helper: process pending reroutes ------------------------------------
-    auto process_reroutes = [&]() {
-        std::vector<OrderId> to_reroute;
-        {
-            std::lock_guard lk(reroute_mutex);
-            to_reroute.swap(pending_reroutes);
-        }
-
-        for (OrderId pid : to_reroute)
-        {
-            Order *parent = exec_handler.get_mutable_order(pid);
-            if (!parent || parent->is_terminal())
-                continue;
-
-            SOR_LOG_INFO("REROUTE order={} remaining={}", parent->id, parent->remaining_quantity);
-            auto decision = router.route_order(*parent);
-            if (!decision.valid())
-            {
-                SOR_LOG_WARN("Reroute failed for order {}", parent->id);
-                continue;
+                SOR_LOG_DEBUG("TODO (Saad): REMOVE - Market data debug | "
+                              "NBBO bid={:.2f} x {} ask={:.2f} x {} spread={:.4f}",
+                              to_double(nbbo.best_bid), nbbo.best_bid_qty,
+                              to_double(nbbo.best_ask), nbbo.best_ask_qty,
+                              to_double(nbbo.spread()));
             }
 
-            for (const auto &slice : decision.slices)
-                send_child(parent->id, *parent, slice);
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-    };
 
-    // -- Run matching engines -------------------------------------------------
-    SOR_LOG_INFO("Processing matching engines...");
-    for (int cycle = 0; cycle < 5; ++cycle)
-    {
-        for (auto &feed : feeds)
-            feed->generate_tick();
+        SOR_LOG_INFO("Market data feed thread stopped");
+    });
 
-        // Update exchange market prices from NBBO so matching engine fills
-        auto nbbo = md_aggregator.get_nbbo(symbol);
-        if (nbbo.valid())
+    // -- Matching engine thread (NEW) -----------------------------------------
+    std::thread matching_thread([&exchange_ptrs, &symbol, &md_aggregator]() {
+        SOR_LOG_INFO("Matching engine thread started");
+
+        while (g_running.load(std::memory_order_relaxed))
         {
-            for (auto &vc : venues)
-                vc.exchange->set_market_price(nbbo.best_bid, nbbo.best_ask);
+            // Update exchange market prices from current NBBO
+            auto nbbo = md_aggregator.get_nbbo(symbol);
+            if (nbbo.valid())
+            {
+                for (auto *ex : exchange_ptrs)
+                    ex->set_market_price(nbbo.best_bid, nbbo.best_ask);
+            }
+
+            // Run matching on all exchanges
+            for (auto *ex : exchange_ptrs)
+                ex->process_matching();
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
 
-        for (auto &vc : venues)
-            vc.exchange->process_matching();
-        process_reroutes();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
+        SOR_LOG_INFO("Matching engine thread stopped");
+    });
 
-    // -- Print results --------------------------------------------------------
-    std::cout << "\n";
-    std::cout << "============================================================\n";
-    std::cout << "                    SIMULATION RESULTS\n";
-    std::cout << "============================================================\n";
+    // -- Daemon wait loop -----------------------------------------------------
+    SOR_LOG_INFO("=== SOR Service Running ===");
+    SOR_LOG_INFO("Threads: main, gateway-order, gateway-exec, zmq-request, md-feed, matching");
+    SOR_LOG_INFO("Listening for orders on {} (ZMQ REQ/REP)",
+                 sys_config.gateway.api.zmq_order_endpoint);
+    SOR_LOG_INFO("Publishing market data on {} (ZMQ PUB)",
+                 sys_config.gateway.api.zmq_market_data_endpoint);
+    SOR_LOG_INFO("Publishing execution events on {} (ZMQ PUB)",
+                 sys_config.gateway.api.zmq_execution_endpoint);
+    SOR_LOG_INFO("Waiting for SIGINT/SIGTERM to shut down...");
 
-    auto strategy_name = [](sor::RoutingStrategy s) -> const char * {
-        switch (s)
-        {
-        case sor::RoutingStrategy::BestPrice: return "BestPrice";
-        case sor::RoutingStrategy::LiquiditySweep: return "LiqSweep";
-        case sor::RoutingStrategy::SmartIOC: return "SmartIOC";
-        case sor::RoutingStrategy::VWAP: return "VWAP";
-        default: return "Unknown";
-        }
-    };
+    while (g_running.load(std::memory_order_relaxed))
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    std::cout << "\n  Order Results:\n";
-    std::cout << "  -------------------------------------------------------\n";
-    for (const auto &r : results)
-    {
-        auto tracked = exec_handler.get_order(r.id);
-        const char *state_str = "N/A";
-        Quantity filled = 0;
-        Quantity total = 0;
-        if (tracked)
-        {
-            state_str = state::OrderStateMachine::to_string(tracked->state);
-            filled = tracked->filled_quantity;
-            total = tracked->quantity;
-        }
+    // -- Shutdown -------------------------------------------------------------
+    SOR_LOG_INFO("Shutdown signal received, stopping services...");
 
-        std::cout << "  Order " << r.id
-                  << " | " << strategy_name(r.strategy)
-                  << " | children=" << r.child_count
-                  << " | " << (r.routed ? "routed" : "REJECTED")
-                  << " | state=" << state_str
-                  << " | filled=" << filled << "/" << total
-                  << "\n";
-    }
+    // Stop new threads first (they check g_running)
+    if (md_feed_thread.joinable())
+        md_feed_thread.join();
+    SOR_LOG_INFO("Market data feed thread joined");
 
-    // Venue stats
-    std::cout << "\n  Venue Statistics:\n";
-    std::cout << "  -------------------------------------------------------\n";
-    for (auto &vc : venues)
-    {
-        auto stats = vc.exchange->get_stats();
-        std::cout << "  Venue " << vc.id
-                  << " | recv=" << stats.orders_received
-                  << " filled=" << stats.orders_filled
-                  << " partial=" << stats.orders_partially_filled
-                  << " reject=" << stats.orders_rejected
-                  << " cancel=" << stats.orders_canceled
-                  << " | latency=" << vc.exchange->avg_latency().count() << "us"
-                  << "\n";
-    }
+    if (matching_thread.joinable())
+        matching_thread.join();
+    SOR_LOG_INFO("Matching engine thread joined");
 
-    // Execution handler stats
-    auto exec_stats = exec_handler.get_stats();
-    std::cout << "\n  Execution Summary:\n";
-    std::cout << "  -------------------------------------------------------\n";
-    std::cout << "  Total fills:         " << exec_stats.total_fills << "\n";
-    std::cout << "  Partial fills:       " << exec_stats.total_partial_fills << "\n";
-    std::cout << "  Rejects:             " << exec_stats.total_rejects << "\n";
-    std::cout << "  Cancels:             " << exec_stats.total_cancels << "\n";
-    std::cout << "  Reroutes:            " << exec_stats.reroutes << "\n";
-    std::cout << "  Completions:         " << total_completions.load() << "\n";
-
-    // Routing engine stats
-    auto route_stats = router.get_stats();
-    std::cout << "\n  Routing Summary:\n";
-    std::cout << "  -------------------------------------------------------\n";
-    std::cout << "  Orders routed:       " << route_stats.orders_routed << "\n";
-    std::cout << "  Orders rejected:     " << route_stats.orders_rejected << "\n";
-    std::cout << "  Total slices:        " << route_stats.total_slices << "\n";
-
-    std::cout << "\n============================================================\n";
-
-    // ZMQ transport stats
-    if (zmq_enabled)
-    {
-        auto zs = zmq_transport->get_stats();
-        std::cout << "\n  ZMQ Transport:\n";
-        std::cout << "  -------------------------------------------------------\n";
-        std::cout << "  Requests received:   " << zs.requests_received << "\n";
-        std::cout << "  Requests handled:    " << zs.requests_handled << "\n";
-        std::cout << "  MD published:        " << zs.md_published << "\n";
-        std::cout << "  Exec published:      " << zs.exec_published << "\n";
-        std::cout << "  Errors:              " << zs.errors << "\n";
-        std::cout << "============================================================\n";
-    }
-
-    // -- Cleanup --------------------------------------------------------------
-    SOR_LOG_INFO("Shutting down...");
+    // Stop ZMQ transport (joins request_thread_)
     if (zmq_transport)
         zmq_transport->stop();
+    SOR_LOG_INFO("ZMQ transport stopped");
+
+    // Stop live provider if active
+    if (live_provider)
+        live_provider->disconnect();
+
+    // Stop feeds
     for (auto &feed : feeds)
         feed->stop();
-    for (auto &vc : venues)
-        vc.exchange->disconnect();
+
+    // Stop Gateway (joins order_thread_ + exec_thread_, disconnects venues)
+    gw.stop();
+    SOR_LOG_INFO("Gateway stopped");
+
+    // Metrics cleanup
     if (sys_config.metrics.enabled || sys_config.enable_metrics)
         MetricsManager::instance().shutdown();
 
-    SOR_LOG_INFO("Smart Order Router stopped");
+    SOR_LOG_INFO("Smart Order Router stopped cleanly");
     return 0;
 }

@@ -6,6 +6,10 @@ set(UNIT_TEST_SOURCES
     test_market_data.cpp
     test_fixed_point.cpp
     test_memory_pool.cpp
+    test_alpaca_normalizer.cpp
+    test_feed_quality_monitor.cpp
+    test_thread_safe_aggregator.cpp
+    test_sor_controller.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/../test_main_listener.cpp
 )
 

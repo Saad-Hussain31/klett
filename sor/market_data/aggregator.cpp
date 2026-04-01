@@ -1,6 +1,7 @@
 #include "market_data/aggregator.h"
 
 #include <algorithm>
+#include <mutex>
 
 namespace sor::market_data
 {
@@ -53,6 +54,7 @@ namespace sor::market_data
 
     void MarketDataAggregator::register_venue(VenueId venue_id)
     {
+        std::unique_lock lock(mutex_);
         // Avoid duplicate registrations.
         for (auto v : venues_)
         {
@@ -66,12 +68,14 @@ namespace sor::market_data
     void MarketDataAggregator::on_book_update(VenueId venue_id, const Symbol &symbol,
                                               const OrderBook &book)
     {
+        std::unique_lock lock(mutex_);
         venue_books_[venue_id][symbol] = book;
         recalculate_nbbo(symbol);
     }
 
     NBBO MarketDataAggregator::get_nbbo(const Symbol &symbol) const
     {
+        std::shared_lock lock(mutex_);
         auto it = nbbo_cache_.find(symbol);
         if (it != nbbo_cache_.end())
         {
@@ -82,15 +86,18 @@ namespace sor::market_data
 
     AggregatedBook MarketDataAggregator::get_aggregated_book(const Symbol &symbol) const
     {
+        std::shared_lock lock(mutex_);
         AggregatedBook agg{};
         agg.symbol = symbol;
-        agg.nbbo = get_nbbo(symbol);
+        // get_nbbo logic inlined to avoid double-locking
+        auto nit = nbbo_cache_.find(symbol);
+        agg.nbbo = (nit != nbbo_cache_.end()) ? nit->second : NBBO{};
         build_aggregated_book(symbol, agg);
         return agg;
     }
 
-    const OrderBook *MarketDataAggregator::get_venue_book(VenueId venue_id,
-                                                          const Symbol &symbol) const
+    const OrderBook *MarketDataAggregator::get_venue_book_unlocked(VenueId venue_id,
+                                                                    const Symbol &symbol) const
     {
         auto venue_it = venue_books_.find(venue_id);
         if (venue_it == venue_books_.end())
@@ -103,14 +110,22 @@ namespace sor::market_data
         return &sym_it->second;
     }
 
+    const OrderBook *MarketDataAggregator::get_venue_book(VenueId venue_id,
+                                                          const Symbol &symbol) const
+    {
+        std::shared_lock lock(mutex_);
+        return get_venue_book_unlocked(venue_id, symbol);
+    }
+
     bool MarketDataAggregator::is_stale(const Symbol &symbol,
                                         std::chrono::microseconds max_age) const
     {
+        std::shared_lock lock(mutex_);
         const auto now = std::chrono::steady_clock::now();
 
         for (auto venue_id : venues_)
         {
-            const OrderBook *book = get_venue_book(venue_id, symbol);
+            const OrderBook *book = get_venue_book_unlocked(venue_id, symbol);
             if (book && book->last_update != Timestamp{})
             {
                 auto age = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -126,6 +141,7 @@ namespace sor::market_data
 
     void MarketDataAggregator::set_nbbo_callback(NBBOCallback cb)
     {
+        std::unique_lock lock(mutex_);
         nbbo_callback_ = std::move(cb);
     }
 
@@ -136,7 +152,7 @@ namespace sor::market_data
 
         for (auto venue_id : venues_)
         {
-            const OrderBook *book = get_venue_book(venue_id, symbol);
+            const OrderBook *book = get_venue_book_unlocked(venue_id, symbol);
             if (!book)
                 continue;
 
@@ -204,7 +220,7 @@ namespace sor::market_data
 
         for (auto venue_id : venues_)
         {
-            const OrderBook *book = get_venue_book(venue_id, symbol);
+            const OrderBook *book = get_venue_book_unlocked(venue_id, symbol);
             if (!book)
                 continue;
 

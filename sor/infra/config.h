@@ -82,7 +82,7 @@ namespace sor::infra
 
         struct Api
         {
-            bool enabled{false};
+            bool enabled{true};
             std::string zmq_order_endpoint{"tcp://*:5555"};
             std::string zmq_market_data_endpoint{"tcp://*:5556"};
             std::string zmq_execution_endpoint{"tcp://*:5557"};
@@ -103,6 +103,31 @@ namespace sor::infra
     };
 
     // ---------------------------------------------------------------------------
+    // Market data provider configuration
+    // ---------------------------------------------------------------------------
+
+    struct MarketDataConfig
+    {
+        std::string provider{"simulated"}; // "simulated", "alpaca", "replay"
+
+        // Alpaca-specific
+        std::string alpaca_api_key;
+        std::string alpaca_api_secret;
+        std::string alpaca_ws_url{"wss://stream.data.alpaca.markets/v2/iex"};
+        bool alpaca_use_sip{false};
+
+        // Symbols to subscribe
+        std::vector<std::string> symbols;
+
+        // Feed quality
+        int32_t staleness_threshold_ms{5000};
+
+        // Reconnection
+        int32_t reconnect_delay_sec{5};
+        int32_t max_reconnect_attempts{10};
+    };
+
+    // ---------------------------------------------------------------------------
     // Top-level system configuration
     // ---------------------------------------------------------------------------
 
@@ -117,6 +142,7 @@ namespace sor::infra
         RiskConfig risk;
         GatewayConfig gateway;
         MetricsConfig metrics;
+        MarketDataConfig market_data;
         std::string data_dir;
     };
 

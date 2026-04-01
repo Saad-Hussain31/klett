@@ -9,7 +9,6 @@
 
 #include "core/types.h"
 #include "core/order.h"
-#include "core/spsc_queue.h"
 #include "core/mpsc_queue.h"
 #include "market_data/aggregator.h"
 #include "risk/risk_manager.h"
@@ -85,6 +84,18 @@ namespace sor::gateway
         };
         Stats get_stats() const;
 
+        // -- External event observers (for ZMQ publishing, etc.) ----------------
+
+        using FillObserver = std::function<void(const Order &, const ExecutionReport &)>;
+        using CompletionObserver = std::function<void(const Order &)>;
+
+        void set_fill_observer(FillObserver cb);
+        void set_completion_observer(CompletionObserver cb);
+
+        /// Allocate a unique order ID without submitting an order.
+        /// Useful when the caller needs to track the ID before submission.
+        OrderId allocate_order_id() { return generate_order_id(); }
+
     private:
         void order_processing_loop();
         void execution_processing_loop();
@@ -98,7 +109,7 @@ namespace sor::gateway
         // Queues.
         MPSCQueue<Order, 8192> order_queue_;
         MPSCQueue<CancelRequest, 4096> cancel_queue_;
-        SPSCQueue<ExecutionReport, 8192> report_queue_;
+        MPSCQueue<ExecutionReport, 8192> report_queue_;
 
         // Subsystems.
         market_data::MarketDataAggregator md_aggregator_;
@@ -118,6 +129,10 @@ namespace sor::gateway
         std::atomic<uint64_t> next_order_id_{1};
 
         Stats stats_;
+
+        // External observers.
+        FillObserver fill_observer_;
+        CompletionObserver completion_observer_;
     };
 
 } // namespace sor::gateway
