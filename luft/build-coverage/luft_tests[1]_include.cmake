@@ -1,0 +1,5 @@
+if(EXISTS "/home/saad/personal/klett/luft/build-coverage/luft_tests[1]_tests.cmake")
+  include("/home/saad/personal/klett/luft/build-coverage/luft_tests[1]_tests.cmake")
+else()
+  add_test(luft_tests_NOT_BUILT luft_tests_NOT_BUILT)
+endif()
